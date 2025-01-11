@@ -1,0 +1,55 @@
+<RCC>
+    <qresource prefix="/cmbok">
+        <file>images/logo.png</file>
+
+        <file>images/comic_black.svg</file>
+        <file>images/comic_white.svg</file>
+        <file>images/book_black.svg</file>
+        <file>images/book_white.svg</file>
+        <file>images/collect_black.svg</file>
+        <file>images/collect_white.svg</file>
+        <file>images/have_collect_black.svg</file>
+        <file>images/have_collect_white.svg</file>
+        <file>images/pdf_black.svg</file>
+        <file>images/pdf_white.svg</file>
+        <file>images/clear_black.svg</file>
+        <file>images/clear_white.svg</file>
+        <file>images/qq_black.svg</file>
+        <file>images/qq_white.svg</file>
+
+        <file>images/header.jpeg</file>
+        <file>images/me.jpg</file>
+        <file>images/comic_cover.png</file>
+        <file>images/book_cover.png</file>
+
+        <file>images/wx.png</file>
+
+        <file>images/recommend1.jpg</file>
+        <file>images/recommend2.jpg</file>
+        <file>images/recommend3.jpg</file>
+        <file>images/recommend4.jpg</file>
+
+        <file>qss/dark/gallery_interface.qss</file>
+        <file>qss/dark/comic_interface.qss</file>
+        <file>qss/dark/book_interface.qss</file>
+        <file>qss/dark/icon_interface.qss</file>
+        <file>qss/dark/link_card.qss</file>
+        <file>qss/dark/sample_card.qss</file>
+        <file>qss/dark/setting_interface.qss</file>
+        <file>qss/dark/view_interface.qss</file>
+        <file>qss/dark/navigation_view_interface.qss</file>
+
+        <file>qss/light/gallery_interface.qss</file>
+        <file>qss/light/comic_interface.qss</file>
+        <file>qss/light/book_interface.qss</file>
+        <file>qss/light/icon_interface.qss</file>
+        <file>qss/light/link_card.qss</file>
+        <file>qss/light/sample_card.qss</file>
+        <file>qss/light/setting_interface.qss</file>
+        <file>qss/light/view_interface.qss</file>
+        <file>qss/light/navigation_view_interface.qss</file>
+
+        <file>i18n/cmbok.zh_CN.qm</file>
+        <file>i18n/cmbok.zh_HK.qm</file>
+    </qresource>
+</RCC>
