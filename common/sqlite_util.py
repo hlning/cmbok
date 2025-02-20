@@ -1,5 +1,11 @@
+import logging
 import os
 import sqlite3
+import traceback
+
+import requests
+
+from common.util import check_url
 
 
 class Row:
@@ -35,40 +41,102 @@ class SQLiteDatabase:
 
     def init(self):
         # 初始化数据库
-        if not self.db_exists:
-            # 创建漫画下载记录表
-            # cover 漫画封面
-            # name 漫画名称
-            # author 漫画作者
-            # key 漫画/图书唯一key，漫画：path_word，图书：book_id
-            # chapter_name 章节名称 只有漫画有
-            # chapter_path_word 章节key 只有漫画有
-            # book_hash 图书hash
-            # type 类型。1：漫画 2：图书
-            # status 状态：-3：软件退出 -2：无法下载 -1：转换epub失败 1：下载中 2：等待中 3：已完成 0：下载失败
-            # process 进度
-            # start_time 开始时间
-            # finish_time 完成时间
+        # 创建漫画下载记录表
+        # cover 漫画封面
+        # name 漫画名称
+        # author 漫画作者
+        # key 漫画/图书唯一key，漫画：path_word，图书：book_id
+        # chapter_name 章节名称 只有漫画有
+        # chapter_path_word 章节key 只有漫画有
+        # book_hash 图书hash
+        # type 类型。1：漫画 2：图书
+        # status 状态：-4：今日无法下载 -3：软件退出 -2：无法下载 -1：转换epub失败 1：下载中 2：等待中 3：已完成 0：下载失败
+        # process 进度
+        # start_time 开始时间
+        # finish_time 完成时间
+
+        flag = self.check_table_exists('cmbok_download_history')
+        if not flag:
             self.create_table('cmbok_download_history',
                               {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
                                'author': 'TEXT', 'key': 'TEXT', 'chapter_name': 'TEXT',
                                'chapter_path_word': 'TEXT', 'book_hash': 'TEXT', 'type': 'INTEGER',
                                'status': 'INTEGER', 'process': 'INTEGER', 'start_time': 'TEXT', 'finish_time': 'TEXT'})
 
-            # 创建漫画/图书收藏记录表
-            # cover 漫画/图书封面
-            # name 漫画/图书名称
-            # author 漫画/图书作者
-            # key 漫画/图书唯一key，漫画path_word，图书：book_id
-            # book_hash 图书：book_hash，用于在收藏页下载
-            # book_extension 图书文件类型
-            # type 类型。1：漫画 2：图书
-            # collection_time 收藏时间
+        # 创建漫画/图书收藏记录表
+        # cover 漫画/图书封面
+        # name 漫画/图书名称
+        # author 漫画/图书作者
+        # key 漫画/图书唯一key，漫画path_word，图书：book_id
+        # book_hash 图书：book_hash，用于在收藏页下载
+        # book_extension 图书文件类型
+        # type 类型。1：漫画 2：图书
+        # collection_time 收藏时间
+        flag = self.check_table_exists('cmbok_collection_record')
+        if not flag:
             self.create_table('cmbok_collection_record',
                               {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
                                'author': 'TEXT', 'key': 'TEXT', 'book_hash': 'TEXT', 'book_extension': 'TEXT',
                                'type': 'INTEGER', 'collection_time': 'TEXT'})
-            self.close()
+
+        # 创建站点下载记录表
+        # comic_name 漫画/图书名称
+        # chapter_num 章节数量
+        # downloaded_num 已下载数量
+        # downloading_num 正在下载数量
+        # is_update 是否在更新
+        # start_time 开始时间
+        # end_time 结束时间
+        flag = self.check_table_exists('website_download_record')
+        if not flag:
+            self.create_table('website_download_record',
+                              {'id': 'INTEGER PRIMARY KEY', 'comic_name': 'TEXT', 'chapter_num': 'INTEGER',
+                               'downloaded_num': 'INTEGER', 'downloading_num': 'INTEGER', 'is_update': 'INTEGER',
+                               'start_time': 'TEXT', 'end_time': 'TEXT'})
+
+        flag = self.check_table_exists('comic_website')
+        if not flag:
+            self.create_table('comic_website',
+                              {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
+                               'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
+                               'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
+                               'img_dom': 'TEXT'})
+        # 同步站点数据
+        self.delete_all_data('comic_website')
+        try:
+            from service.cmbok_service import CMBOK_WEBSITE
+            url = f'{CMBOK_WEBSITE}cmbok/comic_website/allwebsites'
+            if check_url(url):
+                response = requests.get(url, timeout=30)
+                response.raise_for_status()
+                if response.status_code == 200:
+                    results = response.json()
+                    for website in results['websites']:
+                        self.insert_data('comic_website', {
+                            'name': website['name'],
+                            'icon': website['icon'],
+                            'url': website['url'],
+                            'comic_cover_dom': website['comic_cover_dom'],
+                            'comic_name_dom': website['comic_name_dom'],
+                            'comic_author_dom': website['comic_author_dom'],
+                            'chapter_name_dom': website['chapter_name_dom'],
+                            'chapter_link_dom': website['chapter_link_dom'],
+                            'img_dom': website['img_dom']
+                        })
+        except Exception:
+            print(traceback.format_exc())
+
+        self.close()
+
+    def check_table_exists(self, table_name):
+        # 查询sqlite_master表，检查指定的表是否存在
+        result = self.query_first_data('sqlite_master', {'type': 'table', 'name': table_name})
+
+        # 如果返回的结果为None，表示表不存在
+        if result:
+            return True
+        else:
+            return False
 
     def create_table(self, table_name, columns):
         """创建表"""
@@ -163,6 +231,12 @@ class SQLiteDatabase:
         condition_str = ' AND '.join([f"{key} = ?" for key in conditions.keys()])
         sql = f"DELETE FROM {table_name} WHERE {condition_str};"
         self.cursor.execute(sql, tuple(conditions.values()))
+        self.connection.commit()
+
+    def delete_all_data(self, table_name):
+        """删除数据"""
+        sql = f"DELETE FROM {table_name}"
+        self.cursor.execute(sql)
         self.connection.commit()
 
     def delErrorRecord(self, table_name):

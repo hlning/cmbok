@@ -5,7 +5,7 @@ import re
 import traceback
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QMovie
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
 from qfluentwidgets import FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
@@ -243,6 +243,9 @@ class BookCard(CardWidget):
 
     # 加载网络图片
     def load_image(self, image_url):
+        # 设置默认加载中的图片
+        self.load_loading_gif(':/cmbok/images/loading.gif')
+
         """从指定的 URL 加载图片"""
         self.manager = QNetworkAccessManager(self)
         self.manager.finished.connect(self.on_image_loaded)
@@ -260,6 +263,12 @@ class BookCard(CardWidget):
         else:
             self.load_fallback_image('resource/images/book_cover.png')  # 加载备用图片
             logging.info(f"错误: {reply.errorString()}")  # 打印错误信息
+
+    def load_loading_gif(self, gif_path):
+        """加载 GIF 动画"""
+        movie = QMovie(gif_path)
+        self.iconWidget.setMovie(movie)  # 将 GIF 设置到 QLabel
+        movie.start()  # 启动 GIF 动画
 
     def load_fallback_image(self, fallback_image_path):
         """加载备用本地图片"""

@@ -13,6 +13,8 @@ class MyFluentIcon(FluentIconBase, Enum):
     PDF = "pdf"
     CLEAR = "clear"
     QQ = "qq"
+    KOODOREADER = "koodoreader"
+    WEBSITE = "website"
 
     def path(self, theme=Theme.AUTO):
         # getIconColor() 根据主题返回字符串 "white" 或者 "black"

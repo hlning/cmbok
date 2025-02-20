@@ -3,7 +3,7 @@ import logging
 import math
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QMovie
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget
 from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, CaptionLabel, \
@@ -95,7 +95,7 @@ class CollectAreaInterface(ScrollArea):
 
     def __initWidget(self):
         self.view.setObjectName('view')
-        self.setObjectName('comicCollectInterface')
+        self.setObjectName('collectInterface')
         StyleSheet.COMIC_INTERFACE.apply(self)
 
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -214,7 +214,7 @@ class CollectCard(CardWidget):
             self.contentLabel.setToolTip(author)
 
         self.hBoxLayout = QHBoxLayout(self)
-        self.setFixedWidth(395)
+        self.setFixedWidth(385)
         self.vBoxLayout = QVBoxLayout()
 
         self.setFixedHeight(73)
@@ -261,6 +261,9 @@ class CollectCard(CardWidget):
 
     # 加载网络图片
     def load_image(self, image_url):
+        # 设置默认加载中的图片
+        self.load_loading_gif(':/cmbok/images/loading.gif')
+
         """从指定的 URL 加载图片"""
         self.manager = QNetworkAccessManager(self)
         self.manager.finished.connect(self.on_image_loaded)
@@ -279,6 +282,12 @@ class CollectCard(CardWidget):
             self.load_fallback_image(
                 ':/cmbok/images/comic_cover.png' if self.type == 1 else ':/cmbok/images/book_cover.png')  # 加载备用图片
             logging.info(f"错误: {reply.errorString()}")  # 打印错误信息
+
+    def load_loading_gif(self, gif_path):
+        """加载 GIF 动画"""
+        movie = QMovie(gif_path)
+        self.iconWidget.setMovie(movie)  # 将 GIF 设置到 QLabel
+        movie.start()  # 启动 GIF 动画
 
     def load_fallback_image(self, fallback_image_path):
         """加载备用本地图片"""

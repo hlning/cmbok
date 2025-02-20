@@ -34,7 +34,7 @@ class ComicInterface(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
-        self.vBoxLayout.setContentsMargins(0, 0, 0, 36)
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 15)
         self.vBoxLayout.setSpacing(40)
         self.vBoxLayout.addWidget(self.banner)
         self.vBoxLayout.addWidget(self.basicInputView)
@@ -59,7 +59,7 @@ class BannerWidget(QWidget):
 
         self.vBoxLayout = QVBoxLayout(self)
         self.galleryLabel = QLabel('我看过的漫画', self)
-        self.banner = QPixmap(':/cmbok/images/header.jpeg')
+        self.banner = QPixmap(':/cmbok/images/header.png')
         self.linkCardView = LinkCardView(self)
 
         self.galleryLabel.setObjectName('galleryLabel')

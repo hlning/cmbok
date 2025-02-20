@@ -38,6 +38,9 @@ class Config(QConfig):
     downloadFolder = ConfigItem(
         "Folders", "DownloadFolder", "app/download", FolderValidator())
 
+    # 窗口高度
+    windowHeight = RangeConfigItem("Height", "WindowHeight", 550, RangeValidator(450, 900))
+
     # epub是否保存到漫画根目录
     epubSaveFolder = ConfigItem("Folders", "EpubSaveFolder", True, BoolValidator())
 
@@ -62,6 +65,11 @@ class Config(QConfig):
          'sony', 'sony300', 'sony900', 'sony-landscape', 'sonyt3', 'tablet', 'generic_eink_large', 'generic_eink',
          'generic_eink_hd']))
 
+    # 是否合并成卷
+    isMergeChapte = ConfigItem("Website", "IsMergeChapte", False, BoolValidator())
+    # 站点多少话合并成一个章节
+    mergeChapterNum = RangeConfigItem("Website", "mergeChapterNum", 1, RangeValidator(1, 20))
+
     # main window
     dpiScale = OptionsConfigItem(
         "MainWindow", "DpiScale", "Auto", OptionsValidator([1, 1.25, 1.5, 1.75, 2, "Auto"]), restart=True)
@@ -71,10 +79,11 @@ class Config(QConfig):
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
+    version = ConfigItem("Update", "Version", 'V1.0.3')
+
 
 YEAR = 2025
 AUTHOR = "甜甜的王甜甜"
-VERSION = '1.0.0'
 HELP_URL = "https://support.qq.com/products/656074"
 GITHUBURL = "https://github.com/hlning/cmbok"
 QQ_URL = "http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=5FjE0PlWCd4oestQLV2mrFuJRq8Ti-o5&authKey=X2t8fw62TNezzfFlvOtvBUbuffHRXuSOQzXOk4xHxtbEPO8Yciwn6pBFXoFXFztK&noverify=0&group_code=927528211"

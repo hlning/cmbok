@@ -1,22 +1,27 @@
 import asyncio
 import datetime
 import logging
+import math
 import os
 import queue
+import re
 import time
 import traceback
+import uuid
 
 import aiohttp
+import httpx
 import requests
 from PyQt5.QtCore import QThread, QMutex, pyqtSignal
 from bs4 import BeautifulSoup
 from ebooklib import epub
+from httpcore import ConnectTimeout
 from natsort import natsorted
 
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
 from common.util import get_current_time, analyze_data, del_folder_images, del_folder, img_to_pdf, \
-    convert_epub_to_mobi, del_file, delete_files_with_character
+    convert_epub_to_mobi, del_file, delete_files_with_character, get_file_extension, deal_url
 from view.download_interface import book_process_signals, download_signals, comic_process_signals
 
 comic_search_lock = QMutex()
@@ -26,7 +31,8 @@ download_comic_lock = QMutex()
 URL = 'https://www.mangacopy.com/'
 WEBSITE = 'https://www.copymanga.com/'
 SEARCH_WEBSITE = 'https://api.mangacopy.com/'
-CMBOK_WEBSITE = 'https://bluemood.xiaomy.net/'
+CMBOK_WEBSITE = 'http://154.40.47.143:5000/'
+#CMBOK_WEBSITE = 'http://127.0.0.1:5000/'
 API_HEADER = {
     'User-Agent': 'duoTuoCartoon/3.2.4 (iPhone; iOS 18.0.1; Scale/3.00) iDOKit/1.0.0 RSSX/1.0.0',
     'version': datetime.datetime.now().strftime("%Y.%m.%d"),
@@ -101,16 +107,22 @@ class BookDownload(QThread):
                 try:
                     headers = {'Range': f'bytes={start}-{end}'}
                     async with session.get(url, headers=headers,
-                                           timeout=aiohttp.ClientTimeout(sock_read=30)) as response:
+                                           timeout=aiohttp.ClientTimeout(sock_read=60 * 5)) as response:
                         response.raise_for_status()
                         if response.status == 206:  # 206 Partial Content
-                            content = await response.read()
+                            # content = await response.read()
                             file_path = os.path.join('app/chunks',
                                                      f'{self.book_id}_{self.book_hash}_{chunk_id}.part')
                             with open(file_path, 'wb') as f:
-                                f.write(content)
+                                while True:
+                                    chunk = await response.content.read(1024)
+                                    if not chunk:
+                                        break
+                                    f.write(chunk)
                             # 更新进度
                             self.process += process
+                            if self.process >= 100:
+                                self.process = 98
                             sqlite_util.update_data('cmbok_download_history',
                                                     {'process': self.process},
                                                     {'id': history_id})
@@ -135,13 +147,21 @@ class BookDownload(QThread):
         async with aiohttp.ClientSession() as session:
             tasks = []
             process = int(100 / len(total_parts))
+            size = math.ceil(len(total_parts) / 100)
             for start, end, index in total_parts:
-                tasks.append(self.download_chunk(session, url, start, end, index, sem, history_id, process))
+                tasks.append(self.download_chunk(session, url, start, end, index, sem, history_id,
+                                                 (process if process > 0 else 1) if index % size == 0 else 0))
             await asyncio.gather(*tasks)
 
             # 合并文件
+            # 定义不允许的字符
+            invalid_chars = r'[<>:"/\\|?*]'
+
+            # 使用正则表达式替换不允许的字符为空字符串
+            sanitized_filename = re.sub(invalid_chars, '', self.book_name)
+
             output_file = os.path.join(cfg.get(cfg.downloadFolder),
-                                       f'{self.book_name}_{self.book_id}.{self.book_extension}')
+                                       f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
             self.merge_files(total_parts, output_file)
             self.download_success(history_id)
 
@@ -169,15 +189,26 @@ class BookDownload(QThread):
                            {'id': history_id})
             download_signals.success.emit('success', self.book_name, self.book_author, 2)
 
-    def download_fail(self, history_id):
+    def download_fail(self, download_status, history_id):
         global book_active_downloads
         with SQLiteDatabase() as db:
             # 下载失败
             book_active_downloads -= 1
-            db.update_data('cmbok_download_history',
-                           {'status': 0, 'finish_time': get_current_time()},
-                           {'id': history_id})
-            download_signals.success.emit('error', self.book_name, self.book_author, 2)
+            if download_status == 'error':
+                db.update_data('cmbok_download_history',
+                               {'status': 0, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('error', self.book_name, self.book_author, 2)
+            elif download_status == 'no_account':
+                db.update_data('cmbok_download_history',
+                               {'status': -4, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('no_account', self.book_name, self.book_author, 2)
+            elif download_status == 'no_num':
+                db.update_data('cmbok_download_history',
+                               {'status': -5, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('no_num', self.book_name, self.book_author, 2)
 
     def run(self):
         global book_active_downloads
@@ -209,14 +240,14 @@ class BookDownload(QThread):
                 if response.status_code == 200:
                     results = response.json()
                     download_status = results['download_status']
-                    if download_status:
+                    if download_status == 'success':
                         file_name = f'{self.book_id}_{self.book_hash}.{self.book_extension}'
                         # 先获取文件大小
                         head = requests.head(f'{CMBOK_WEBSITE}static/files/{file_name}')
 
                         if head.status_code == 200:
                             file_size = int(head.headers.get('Content-Length'))
-                            chunk_size = 1024 * 512  # 每个块0.5MB
+                            chunk_size = 1024 * 1024  # 每个块1MB
                             # 计算块的数量
                             chunks = [(i, min(i + chunk_size - 1, file_size - 1), index)
                                       for index, i in enumerate(range(0, file_size, chunk_size))]
@@ -227,9 +258,9 @@ class BookDownload(QThread):
 
                             asyncio.run(self.download_file(url, chunks, history_id, max_concurrent_chunks=10))
                         else:
-                            self.download_fail(history_id)
+                            self.download_fail('error', history_id)
                     else:
-                        self.download_fail(history_id)
+                        self.download_fail(download_status, history_id)
 
                     # 继续下一个等待的下载任务（如果有的话）
                     if not book_waiting_queue.empty():
@@ -241,7 +272,7 @@ class BookDownload(QThread):
         except Exception:
             sqlite_util.rollback()
             delete_files_with_character('app/chunks', f'{self.book_id}_{self.book_hash}')
-            self.download_fail(history_id)
+            self.download_fail('error', history_id)
             # 继续下一个等待的下载任务（如果有的话）
             if not book_waiting_queue.empty():
                 next_book = book_waiting_queue.get()
@@ -347,7 +378,7 @@ class ComicCollects(QThread):
             sqlite_util.close()
 
 
-# 获取漫画目录下所有图片
+# 拷贝漫画——获取漫画目录下所有图片
 download_locked = False
 
 
@@ -407,6 +438,8 @@ class ComicDownload(QThread):
                                 f.write(image_data)
                             # 更新进度
                             shared_data['process'] += process
+                            if shared_data['process'] >= 100:
+                                shared_data['process'] = 99
                             sqlite_util.update_data('cmbok_download_history',
                                                     {'process': shared_data['process']},
                                                     {'id': history_id})
@@ -494,12 +527,16 @@ class ComicDownload(QThread):
                                       shared_data):
         logging.info(f'{comic_name}{chapter_name}图片开始下载')
         download_folder = cfg.get(cfg.downloadFolder)
+        invalid_chars = r'[<>:"/\\|?*]'
+        # 替换特殊字符为空字符
+        chapter_name = re.sub(invalid_chars, '', chapter_name)
         path = f"{download_folder}/{comic_name}/{chapter_name}"
         os.makedirs(path, exist_ok=True)
         process = int(100 / len(image_urls))
+        size = math.ceil(len(image_urls) / 100)
         tasks = [
-            self.async_download_image(url, path, 'Cmbok_' + str(index) + os.path.splitext(url)[1], history_id,
-                                      shared_data, process)
+            self.async_download_image(url, path, 'Cmbok_' + str(index) + get_file_extension(url), history_id,
+                                      shared_data, (process if process > 0 else 1) if index % size == 0 else 0)
             for
             index, url in
             enumerate(image_urls)]
@@ -531,10 +568,10 @@ class ComicDownload(QThread):
                                          media_type='image/jpeg')
                 with open(f'{path}/{file_name}', 'rb') as f:
                     img_item.set_content(f.read())
-                    if index == 0:
-                        book.add_item(epub.EpubItem(uid="cover", file_name=file_name,
-                                                    media_type='image/jpeg',
-                                                    content=f.read()))
+                    # if index == 0:
+                    #    book.add_item(epub.EpubItem(uid="cover", file_name=file_name,
+                    #                                media_type='image/jpeg',
+                    #                                content=f.read()))
                 book.add_item(img_item)
 
                 chapter = epub.EpubHtml(title=f'Image {index}', file_name=f'chap_{index}.xhtml', lang='en')
@@ -607,3 +644,159 @@ class ComicDownload(QThread):
             return [i['url'] for i in data]
         except Exception as e:
             logging.info('获取图片失败')
+
+
+# 漫画站点——获取漫画目录下所有图片
+
+class ComicWebsiteChapterImages(QThread):
+    success = pyqtSignal(object)
+
+    def __init__(self, comic_name, chapter_name, chapter_images):
+        super(ComicWebsiteChapterImages, self).__init__()
+        self.comic_name = comic_name
+        self.chapter_images = chapter_images
+        self.chapter_name = chapter_name
+
+    def run(self):
+        try:
+            asyncio.run(self.download_chapter_images(self.chapter_images, self.comic_name, self.chapter_name))
+
+        except Exception as e:
+            self.success.emit(self.comic_name)
+            logging.info(traceback.format_exc())
+            logging.info('下载所有图片失败')
+
+    # 下载单个图片的异步函数
+    async def async_download_image(self, url, save_path, filename):
+        # 保存图片，文件名可根据需要修改
+        try:
+            filename = filename.replace('/', '')
+            # 设置请求头
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            if not os.path.exists(os.path.join(save_path, filename)):
+                async with httpx.AsyncClient(timeout=20) as client:
+                    response = await client.get(url, headers=headers)
+                    # 检查请求是否成功
+                    if response.status_code == 200:
+                        with open(os.path.join(save_path, filename), 'wb') as file:
+                            file.write(response.content)
+                    else:
+                        logging.info(f"Failed to download {url}")
+        except Exception as e:
+            logging.info(traceback.format_exc())
+            logging.info(f'图片url：{url}，图片名称：{filename}')
+            logging.info('下载图片异常')
+
+    async def download_chapter_images(self, image_urls, comic_name, chapter_name):
+        logging.info(f'{comic_name}{chapter_name}图片开始下载')
+        download_folder = cfg.get(cfg.downloadFolder)
+        invalid_chars = r'[<>:"/\\|?*]'
+        # 替换特殊字符为空字符
+        chapter_name = re.sub(invalid_chars, '', chapter_name)
+        path = f"{download_folder}/{comic_name}/{chapter_name}"
+        os.makedirs(path, exist_ok=True)
+        tasks = [
+            self.async_download_image(deal_url(url), path,
+                                      chapter_name.split('_')[0] + '_Cmbok_' + str(index) + get_file_extension(
+                                          url))
+            for
+            index, url in
+            enumerate(image_urls)]
+        await asyncio.gather(*tasks)
+        logging.info(f'{comic_name}{chapter_name}图片下载完成')
+        self.success.emit(comic_name)
+
+    # 下载章节图片
+
+
+class EpubThread(QThread):
+    success = pyqtSignal()
+
+    def __init__(self, path, comic_name):
+        super(EpubThread, self).__init__()
+        self.path = path
+        self.comic_name = comic_name
+
+    def run(self):
+        self.images_to_epub(self.path, self.comic_name)
+
+    # 生成epub
+    def images_to_epub(self, download_folder, comic_name):
+        try:
+            for entry in os.listdir(download_folder):
+                path = os.path.join(download_folder, entry)
+                if os.path.isdir(path):  # 检查是否为目录
+                    chapter_name = entry
+                    logging.info(f'{comic_name}{chapter_name}开始转换epub')
+                    book = epub.EpubBook()
+                    book.set_identifier(str(uuid.uuid1()).lower().replace('-', ''))
+                    book.set_title(chapter_name)
+                    book.set_language('en')
+                    book.add_author('')
+                    # 获取目录下的所有文件
+                    files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+                    # 进行自然排序
+                    sorted_files = natsorted(files)
+                    # 漫画图片目录
+                    for index, file_name in enumerate(sorted_files):
+                        img_item = epub.EpubItem(uid=file_name, file_name=file_name,
+                                                 media_type='image/jpeg')
+                        with open(f'{path}/{file_name}', 'rb') as f:
+                            img_item.set_content(f.read())
+                            # if index == 0:
+                            #     book.add_item(epub.EpubItem(uid="cover", file_name=file_name,
+                            #                                 media_type='image/jpeg',
+                            #                                 content=f.read()))
+                        book.add_item(img_item)
+
+                        chapter = epub.EpubHtml(title=f'Image {index}', file_name=f'chap_{index}.xhtml', lang='en')
+                        chapter.set_content(f'<html><body><img src="{img_item.file_name}" /></body></html>')
+                        book.add_item(chapter)
+                        book.spine.append(chapter)
+                    nav = epub.EpubNav()
+                    book.add_item(nav)
+
+                    # epub是否保存到漫画根目录
+                    epubSaveFolder = cfg.get(cfg.epubSaveFolder)
+                    if epubSaveFolder:
+                        save_path = f"{download_folder}"
+                    else:
+                        save_path = f"{path}"
+                    epub.write_epub(os.path.join(save_path, f'{comic_name}_{chapter_name}.epub'), book)
+
+                    # 是否生成pdf
+                    isSavePdf = cfg.get(cfg.isSavePdf)
+                    if isSavePdf:
+                        img_to_pdf(sorted_files, path, f'{save_path}/{comic_name}_{chapter_name}.pdf')
+
+                    # 是否转换mobi
+                    if cfg.get(cfg.isSaveMobi):
+                        # 先生成pdf
+                        if not isSavePdf:
+                            img_to_pdf(sorted_files, path, f'{save_path}/{comic_name}_{chapter_name}.pdf')
+                        # 转mobi，需要配置ebook-convert
+                        calibrePath = cfg.get(cfg.calibrePath)
+                        if calibrePath != '' and os.path.isfile(calibrePath) and os.path.basename(
+                                calibrePath) == 'ebook-convert.exe':
+                            convert_epub_to_mobi(calibrePath, cfg.get(cfg.calibreOutputDevice),
+                                                 f'{comic_name}_{chapter_name}',
+                                                 f'{save_path}/{comic_name}_{chapter_name}.pdf',
+                                                 f'{save_path}/{comic_name}_{chapter_name}.mobi')
+                            # 转换完成删除pdf
+                            if not isSavePdf:
+                                del_file(f'{save_path}/{comic_name}_{chapter_name}.pdf')
+
+                    # 合并epub之后，根据配置是否删除章节图片
+                    if cfg.get(cfg.isDelChapterImages):
+                        if epubSaveFolder:
+                            del_folder(path)
+                        else:
+                            del_folder_images(path)
+                    logging.info(f'{comic_name}{chapter_name}转换epub完成')
+        except Exception:
+            logging.info(traceback.format_exc())
+            logging.info('生成epub异常')
+        finally:
+            self.success.emit()

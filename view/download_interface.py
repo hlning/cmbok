@@ -6,7 +6,8 @@ import traceback
 
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QSizePolicy, \
+    QStyle
 from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
     PipsPager, PipsScrollButtonDisplayMode, TableWidget, \
     RoundMenu, Action, ProgressRing
@@ -98,6 +99,13 @@ class DownloadInterface(QWidget):
         elif status == 'fail':
             info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"{name}-{chapter_name}下载失败，(꒦_꒦)", self,
                          InfoBarPosition.TOP_RIGHT)
+        elif status == 'no_account':
+            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"今日已无法下载，明天再来吧(*^▽^*)", self,
+                         InfoBarPosition.TOP_RIGHT)
+        elif status == 'no_num':
+            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
+                         InfoBarPosition.TOP_RIGHT)
+
         self.updateComicRecords(type)
 
 
@@ -304,15 +312,15 @@ class DownloadWidget(QWidget):
         self.tableWidget.setColumnWidth(0, int(width))
         if self.type == 1:
             self.tableWidget.setColumnWidth(1, int(width * 1.3))
-            self.tableWidget.setColumnWidth(2, int(width * 1.1))
-            self.tableWidget.setColumnWidth(3, int(width * 0.9))
+            self.tableWidget.setColumnWidth(2, int(width * 1))
+            self.tableWidget.setColumnWidth(3, int(width * 0.8))
             self.tableWidget.setColumnWidth(4, int(width * 0.9))
             self.tableWidget.setColumnWidth(5, int(width * 0.6))
             self.tableWidget.setColumnWidth(6, int(width * 1.6))
             self.tableWidget.setColumnWidth(7, int(width * 1.6))
         else:
             self.tableWidget.setColumnWidth(1, int(width * 1.7))
-            self.tableWidget.setColumnWidth(2, int(width * 1.6))
+            self.tableWidget.setColumnWidth(2, int(width * 1.4))
             self.tableWidget.setColumnWidth(3, int(width * 0.9))
             self.tableWidget.setColumnWidth(4, int(width * 0.6))
             self.tableWidget.setColumnWidth(5, int(width * 1.6))
@@ -374,9 +382,9 @@ class DownloadWidget(QWidget):
 
             # 添加表格数据
             for i, history in enumerate(historys):
-                status_item = QTableWidgetItem(
-                    '软件退出' if history.status == -3 else '无法下载' if history.status == -2 else '转换epub失败' if history.status == -1 else '下载中' if history.status == 1 else '等待中' if history.status == 2 else '已完成' if history.status == 3 else '下载失败')
-                if history.status == -3 or history.status == -2 or history.status == -1 or history.status == 0:
+                status_msg = '下载限制' if history.status == -5 else '今日无法下载' if history.status == -4 else '软件退出' if history.status == -3 else '版权受限' if history.status == -2 else '转换epub失败' if history.status == -1 else '下载中' if history.status == 1 else '等待中' if history.status == 2 else '已完成' if history.status == 3 else '下载失败'
+                status_item = QTableWidgetItem(status_msg)
+                if history.status == -5 or history.status == -4 or history.status == -3 or history.status == -2 or history.status == -1 or history.status == 0:
                     status_item.setForeground(QBrush(QColor(253, 46, 86)))  # 红色字体
                 elif history.status == 1:
                     status_item.setForeground(QBrush(QColor(64, 158, 215)))  # 蓝色字体
@@ -384,8 +392,9 @@ class DownloadWidget(QWidget):
                     status_item.setForeground(QBrush(QColor(198, 202, 219)))  # 灰色字体
                 elif history.status == 3:
                     status_item.setForeground(QBrush(QColor(19, 210, 105)))  # 绿色字体
-
                 self.tableWidget.setItem(i, 0, QTableWidgetItem(str(history.id)))
+                status_item.setStatusTip(status_msg)
+
                 nameItem = QTableWidgetItem(history.name)
                 nameItem.setToolTip(history.name)
                 self.tableWidget.setItem(i, 1, nameItem)
@@ -413,8 +422,7 @@ class DownloadWidget(QWidget):
             sqlite_util.close()
 
     def createRing(self, process):
-        ring_layout = QHBoxLayout()
-        ring_layout.setAlignment(Qt.AlignCenter)
+        # 创建按钮
         ring = ProgressRing()
         # 设置进度环取值范围和当前值
         ring.setRange(0, 100)
@@ -423,9 +431,14 @@ class DownloadWidget(QWidget):
         ring.setFixedSize(25, 25)
         # 调整厚度
         ring.setStrokeWidth(4)
-        ring_layout.addWidget(ring)
-        ring_widget = QWidget()
-        ring_widget.setLayout(ring_layout)
-        ring_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        return ring_widget
+
+        # 创建一个 QHBoxLayout 来居中按钮
+        layout = QHBoxLayout()
+        layout.addWidget(ring)  # 水平居中
+
+        # 创建一个 QWidget 容器，将布局应用于该容器
+        container = QWidget()
+        container.setLayout(layout)
+        container.setFixedHeight(50)
+        return container
 # 下载窗口

@@ -4,6 +4,11 @@
     font-weight: bold;
 }
 
+
+#authorLabel {
+    color: white;
+}
+
 #contentLabel {
     color: rgb(208, 208, 208);
     font: 12px 'Segoe UI', 'Microsoft YaHei', 'PingFang SC';

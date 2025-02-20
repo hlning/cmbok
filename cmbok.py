@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import time
 import traceback
@@ -7,9 +8,9 @@ from pathlib import Path
 import requests
 from PyQt5.QtCore import Qt, QTranslator, QSize, QUrl
 from PyQt5.QtGui import QIcon, QImage, QDesktopServices
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication
+from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication, QDesktopWidget
 from qfluentwidgets import FluentIcon as FIF, SplashScreen, InfoBarIcon, InfoBarPosition, TeachingTip, \
-    TeachingTipTailPosition
+    TeachingTipTailPosition, Icon
 from qfluentwidgets import NavigationItemPosition, FluentWindow, SubtitleLabel, setFont, NavigationAvatarWidget, \
     MessageBox, FluentTranslator, toggleTheme
 
@@ -18,12 +19,14 @@ from common.sqlite_util import SQLiteDatabase
 from common.util import check_url, clean_file
 from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
+from service.cmbok_service import CMBOK_WEBSITE
 from view.book_interface import BookInterface
 from view.collect_interface import CollectInterface
 from view.comic_interface import ComicInterface
 from view.download_interface import DownloadInterface
 from view.setting_interface import SettingInterface
 from resource import resource
+from view.website_interface import WebsiteInterface
 
 
 class Widget(QFrame):
@@ -53,6 +56,8 @@ class Window(FluentWindow):
         self.comicInterface = ComicInterface(self)
         # 图书搜索窗口
         self.bookInterface = BookInterface(self)
+        # 漫画网站窗口
+        self.websiteInterface = WebsiteInterface(self)
         # 收藏记录窗口
         self.collectInterface = CollectInterface(self)
         # 下载记录窗口
@@ -81,7 +86,7 @@ class Window(FluentWindow):
             # 是否检查版本更新
             is_update = cfg.get(cfg.checkUpdateAtStartUp)
             if is_update:
-                url = 'https://bluemood.xiaomy.net/cmbok/version/version'
+                url = f'{CMBOK_WEBSITE}cmbok/version/version'
                 # 检查状态码
                 if check_url(url):
                     response = requests.get(url)
@@ -89,15 +94,18 @@ class Window(FluentWindow):
                     if response.status_code == 200:
                         results = response.json()
                         version = results['version']
-                        if version is not None and version != '':
-                            w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
-                            if w.exec():
-                                url = QUrl(version['url'])  # 要打开的链接
-                                QDesktopServices.openUrl(url)
-                            else:
-                                logging.info('取消')
+                        if version is not None and version['no'] != cfg.get(cfg.version):
+                            if version is not None and version != '':
+                                w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
+                                if w.exec():
+                                    url = QUrl(version['url'])  # 要打开的链接
+                                    QDesktopServices.openUrl(url)
+                                else:
+                                    logging.info('取消')
                         else:
                             self.get_notification()
+                else:
+                    self.get_notification()
             else:
                 self.get_notification()
         except Exception:
@@ -107,7 +115,7 @@ class Window(FluentWindow):
     # 检查公告
     def get_notification(self):
         try:
-            url = 'https://bluemood.xiaomy.net/cmbok/notification/notification'
+            url = f'{CMBOK_WEBSITE}cmbok/notification/notification'
             if check_url(url):
                 response = requests.get(url)
                 response.raise_for_status()
@@ -123,10 +131,14 @@ class Window(FluentWindow):
     # 监听侧边栏改变事件
     def on_navigation_changed(self, index):
         if index == 2:
+            # 默认更新站点记录
+            self.websiteInterface.updateWebsiteRecords(1)
+            self.websiteInterface.updateWebsiteRecords(2)
+        if index == 3:
             # 默认更新收藏记录
             self.collectInterface.updateComicRecords(1)
             self.collectInterface.updateComicRecords(2)
-        if index == 3:
+        if index == 4:
             # 默认更新下载记录
             self.downloadInterface.updateComicRecords(1)
             self.downloadInterface.updateComicRecords(2)
@@ -135,9 +147,18 @@ class Window(FluentWindow):
     def initNavigation(self):
         self.addSubInterface(self.comicInterface, MyFluentIcon.COMIC, '漫画')
         self.addSubInterface(self.bookInterface, MyFluentIcon.BOOK, '图书')
+        self.addSubInterface(self.websiteInterface, MyFluentIcon.WEBSITE, '网站')
+        self.navigationInterface.addItem(
+            routeKey='Koodoreader',
+            icon=MyFluentIcon.KOODOREADER,
+            text='Koodoreader',
+            onClick=self.onKoodoreader,
+            selectable=False,
+            tooltip='Koodoreader',
+            position=NavigationItemPosition.TOP
+        )
         self.addSubInterface(self.collectInterface, MyFluentIcon.COLLECT, '收藏')
         self.addSubInterface(self.downloadInterface, FIF.DOWNLOAD, '下载')
-
         self.navigationInterface.addSeparator()
 
         self.navigationInterface.addWidget(
@@ -158,8 +179,16 @@ class Window(FluentWindow):
         self.addSubInterface(
             self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
+    def onKoodoreader(self):
+        QDesktopServices.openUrl(QUrl('https://web.koodoreader.com/'))
+
     def initWindow(self):
-        self.setFixedSize(950, 900)
+        self.setFixedWidth(950)
+        # 获取当前屏幕的分辨率
+        screen = QDesktopWidget().screenGeometry()
+        height = screen.height()
+        windowHeight = cfg.get(cfg.windowHeight)
+        self.setMinimumHeight(windowHeight if windowHeight < height else height - 50)
         self.setWindowIcon(QIcon(':/cmbok/images/logo.png'))
         self.setWindowTitle('Cmbok，来找点漫画和图书看看吧(✧◡✧)')
 
@@ -200,8 +229,22 @@ class Window(FluentWindow):
         file_path = Path(LOG_PATH)
         if not file_path.exists():
             file_path.touch()  # 创建文件，什么内容都不写
-        logging.basicConfig(filename=LOG_PATH, level=logging.INFO,
-                            format='%(asctime)s - %(levelname)s - %(message)s')
+        # 创建日志器
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)  # 设置全局日志等级
+
+        # 创建日志文件处理器
+        file_handler = logging.FileHandler(LOG_PATH, mode="a", encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)  # 设置日志处理器的等级
+
+        # 日志格式化
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        file_handler.setFormatter(formatter)
+
+        # 添加处理器到日志器
+        logger.addHandler(file_handler)
         logging.info("应用程序启动")
 
     def closeEvent(self, event):
@@ -225,25 +268,38 @@ class Window(FluentWindow):
 
 
 if __name__ == '__main__':
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    try:
+        # enable dpi scale
+        if cfg.get(cfg.dpiScale) == "Auto":
+            QApplication.setHighDpiScaleFactorRoundingPolicy(
+                Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+        else:
+            os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+            os.environ["QT_SCALE_FACTOR"] = str(cfg.get(cfg.dpiScale))
 
-    # 初始化数据库
-    sqlite_util = SQLiteDatabase()
-    sqlite_util.init()
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
 
-    app = QApplication(sys.argv)
-    # internationalization
-    locale = cfg.get(cfg.language).value
-    translator = FluentTranslator(locale)
-    galleryTranslator = QTranslator()
-    galleryTranslator.load(locale, "cmbok", ".", ":/cmbok/i18n")
+        # 初始化数据库
+        sqlite_util = SQLiteDatabase()
+        sqlite_util.init()
 
-    app.installTranslator(translator)
-    app.installTranslator(galleryTranslator)
+        app = QApplication(sys.argv)
+        # internationalization
+        locale = cfg.get(cfg.language).value
+        translator = FluentTranslator(locale)
+        galleryTranslator = QTranslator()
+        galleryTranslator.load(locale, "cmbok", ".", ":/cmbok/i18n")
 
-    w = Window()
-    w.show()
-    app.exec()
+        app.installTranslator(translator)
+        app.installTranslator(galleryTranslator)
+
+        w = Window()
+        w.show()
+        app.exec()
+    except Exception as e:
+        logging.info("发生异常：", e)
+        logging.info(traceback.format_exc())

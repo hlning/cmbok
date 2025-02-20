@@ -5,7 +5,7 @@ import re
 import traceback
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-from PyQt5.QtGui import QColor, QPixmap
+from PyQt5.QtGui import QColor, QPixmap, QMovie
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget
 from qfluentwidgets import TextWrap, FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
@@ -66,7 +66,7 @@ class ComicSearchCardView(QWidget):
         self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addWidget(self.lineEdit)
         self.vBoxLayout.addLayout(self.flowLayout, 1)
-        self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        self.vBoxLayout.addWidget(self.pager, 1, alignment=Qt.AlignRight | Qt.AlignVCenter)
 
         self.titleLabel.setObjectName('viewTitleLabel')
         StyleSheet.SAMPLE_CARD.apply(self)
@@ -243,6 +243,9 @@ class ComicCard(CardWidget):
 
     # 加载网络图片
     def load_image(self, image_url):
+        # 设置默认加载中的图片
+        self.load_loading_gif(':/cmbok/images/loading.gif')
+
         """从指定的 URL 加载图片"""
         self.manager = QNetworkAccessManager(self)
         self.manager.finished.connect(self.on_image_loaded)
@@ -261,11 +264,17 @@ class ComicCard(CardWidget):
             self.load_fallback_image(':/cmbok/images/comic_cover.png')  # 加载备用图片
             logging.info(f"错误: {reply.errorString()}")  # 打印错误信息
 
+    def load_loading_gif(self, gif_path):
+        """加载 GIF 动画"""
+        movie = QMovie(gif_path)
+        self.iconWidget.setMovie(movie)  # 将 GIF 设置到 QLabel
+        movie.start()  # 启动 GIF 动画
+
     def load_fallback_image(self, fallback_image_path):
         """加载备用本地图片"""
         pixmap = QPixmap(fallback_image_path)
         if not pixmap.isNull():
-            self.image_label.setPixmap(pixmap)  # 设置标签的备用图片
+            self.iconWidget.setPixmap(pixmap)  # 设置标签的备用图片
         else:
             logging.info("备用图片加载失败")  # 处理备用图片加载失败的情况
 
@@ -342,6 +351,9 @@ class DownloadFlyoutView(FlyoutViewBase):
 
     # 加载网络图片
     def load_image(self, image_url):
+        # 设置默认加载中的图片
+        self.load_loading_gif(':/cmbok/images/loading.gif')
+
         """从指定的 URL 加载图片"""
         self.manager = QNetworkAccessManager(self)
         self.manager.finished.connect(self.on_image_loaded)
@@ -359,6 +371,12 @@ class DownloadFlyoutView(FlyoutViewBase):
         else:
             self.load_fallback_image(':/cmbok/images/comic_cover.png')  # 加载备用图片
             logging.info(f"错误: {reply.errorString()}")  # 打印错误信息
+
+    def load_loading_gif(self, gif_path):
+        """加载 GIF 动画"""
+        movie = QMovie(gif_path)
+        self.iconWidget.setMovie(movie)  # 将 GIF 设置到 QLabel
+        movie.start()  # 启动 GIF 动画
 
     def load_fallback_image(self, fallback_image_path):
         """加载备用本地图片"""

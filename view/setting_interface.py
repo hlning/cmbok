@@ -6,18 +6,19 @@ import requests
 from PyQt5.QtCore import Qt, QUrl
 from PyQt5.QtGui import QDesktopServices
 from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog
-from qfluentwidgets import FluentIcon as FIF, InfoBarIcon, MessageBox
+from qfluentwidgets import FluentIcon as FIF, InfoBarIcon, MessageBox, SettingCard
 from qfluentwidgets import InfoBar
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
                             ComboBoxSettingCard, ExpandLayout, CustomColorSettingCard,
                             setTheme, setThemeColor, RangeSettingCard)
 
-from common.config import cfg, HELP_URL, VERSION, QQ_URL, GITHUBURL
+from common.config import cfg, HELP_URL, QQ_URL, GITHUBURL
 from common.style_sheet import StyleSheet
 from common.util import check_url
 from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
+from service.cmbok_service import CMBOK_WEBSITE
 
 
 class SettingInterface(ScrollArea):
@@ -49,6 +50,14 @@ class SettingInterface(ScrollArea):
             FIF.IOT,
             '下载最大线程',
             '此设置用于同时可以下载多少漫画章节或多少图书',
+            self.useSettingGroup
+        )
+
+        self.windowHeightCard = RangeSettingCard(
+            cfg.windowHeight,
+            FIF.IOT,
+            '窗口高度',
+            '已经把高度不能调节放开，可以在这里配置适合的高度',
             self.useSettingGroup
         )
 
@@ -119,6 +128,26 @@ class SettingInterface(ScrollArea):
                    'generic_eink',
                    'generic_eink_hd'],
             parent=self.comicSettingGroup
+        )
+
+        # 站点设置
+        self.websiteSettingGroup = SettingCardGroup(
+            '站点设置', self.scrollWidget)
+
+        self.isMergeChapterCard = SwitchSettingCard(
+            FIF.MEGAPHONE,
+            '漫画是否合并成卷',
+            '注意，如果开启每次合并前都会清空漫画目录下的所有文件',
+            configItem=cfg.isMergeChapte,
+            parent=self.websiteSettingGroup
+        )
+
+        self.mergeChapterNumCard = RangeSettingCard(
+            cfg.mergeChapterNum,
+            FIF.IOT,
+            '漫画多少话合并成一卷',
+            '需先开启合并成卷，此设置用于站点中的漫画下载合并成一卷',
+            self.websiteSettingGroup
         )
 
         # 个性化
@@ -203,7 +232,7 @@ class SettingInterface(ScrollArea):
             '检查更新',
             FIF.INFO,
             '关于',
-            f"这是我自从买了一台Kindle之后，做来下载漫画和图书用的，目前还在完善中，当前版本" + VERSION + "\nPyQt-Fluent-Widgets @2025 zhiyiYo",
+            f"这是我自从买了一台Kindle之后，做来下载漫画和图书用的，目前还在完善中，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @2025 zhiyiYo",
             self.aboutGroup
         )
         self.aboutCard.clicked.connect(self.aboubt)
@@ -212,22 +241,25 @@ class SettingInterface(ScrollArea):
 
     def aboubt(self):
         try:
-            url = 'https://bluemood.xiaomy.net/cmbok/version/version'
+            url = f'{CMBOK_WEBSITE}/cmbok/version/version'
             if check_url(url):
                 response = requests.get(url)
                 response.raise_for_status()
                 if response.status_code == 200:
                     results = response.json()
                     version = results['version']
-                    if version is not None and version != '':
-                        w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
-                        if w.exec():
-                            url = QUrl(version['url'])  # 要打开的链接
-                            QDesktopServices.openUrl(url)
-                        else:
-                            logging.info('取消')
+                    if version is not None and version['no'] == cfg.get(cfg.version):
+                        info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
                     else:
-                        info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
+                        if version is not None and version != '':
+                            w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
+                            if w.exec():
+                                url = QUrl(version['url'])  # 要打开的链接
+                                QDesktopServices.openUrl(url)
+                            else:
+                                logging.info('取消')
+                        else:
+                            info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
             else:
                 self.get_notification()
         except Exception:
@@ -259,6 +291,8 @@ class SettingInterface(ScrollArea):
         # self.useSettingGroup.addSettingCard(self.useLocalServerCard)
         # 下载最大线程
         self.useSettingGroup.addSettingCard(self.downloadThreadNumCard)
+        # 窗口高度
+        self.useSettingGroup.addSettingCard(self.windowHeightCard)
         # 下载目录
         self.useSettingGroup.addSettingCard(self.downloadFolderCard)
 
@@ -274,6 +308,10 @@ class SettingInterface(ScrollArea):
         self.comicSettingGroup.addSettingCard(self.calibrePathCard)
         # 转换Mobi页面设置
         self.comicSettingGroup.addSettingCard(self.calibreOutputDeviceCard)
+        # 是否合并成卷
+        self.websiteSettingGroup.addSettingCard(self.isMergeChapterCard)
+        # 站点漫画多少话合并成一个章节
+        self.websiteSettingGroup.addSettingCard(self.mergeChapterNumCard)
 
         self.personalGroup.addSettingCard(self.themeCard)
         self.personalGroup.addSettingCard(self.themeColorCard)
@@ -291,6 +329,7 @@ class SettingInterface(ScrollArea):
         self.expandLayout.setContentsMargins(36, 10, 36, 0)
         self.expandLayout.addWidget(self.useSettingGroup)
         self.expandLayout.addWidget(self.comicSettingGroup)
+        self.expandLayout.addWidget(self.websiteSettingGroup)
         self.expandLayout.addWidget(self.personalGroup)
         self.expandLayout.addWidget(self.updateSoftwareGroup)
         self.expandLayout.addWidget(self.aboutGroup)

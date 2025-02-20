@@ -5,12 +5,17 @@ import os
 import shutil
 import subprocess
 import traceback
+import urllib.parse
 from datetime import datetime
 
 import requests
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from PIL import Image
+from ebooklib import epub
+from natsort import natsorted
+
+from common.config import cfg
 
 
 # 获取当前时间字符串
@@ -207,7 +212,7 @@ def convert_epub_to_mobi(calibrePath, calibreOutputDevice, title, epub_file, mob
 def check_url(url):
     try:
         # 发送 HEAD 请求
-        response = requests.head(url, allow_redirects=True, timeout=5)
+        response = requests.head(url, allow_redirects=True, timeout=10)
         # 检查状态码
         if response.status_code == 200:
             logging.info(f"URL有效")
@@ -232,3 +237,47 @@ def delete_files_with_character(directory, character):
                     print(f'已删除文件: {file_path}')
                 except Exception as e:
                     print(f'无法删除文件 {file_path}: {e}')
+
+
+def get_file_extension(url):
+    # 使用 urllib.parse 的 urlparse 解析 URL
+    parsed_url = urllib.parse.urlparse(url)
+
+    # 提取路径部分
+    path = parsed_url.path
+
+    # 使用 os.path.splitext 获取文件名和扩展名
+    _, file_extension = os.path.splitext(path)
+
+    # 返回扩展名，去掉前面的点（.）
+    return file_extension if file_extension != '' else '.jpeg'
+
+
+def deal_url(url):
+    if '?' in url:
+        base_url, query_string = url.split('?', 1)  # 将网址分为基本部分和查询部分
+        # 替换查询字符串中的斜杠
+        modified_query_string = query_string.replace('/', '%2F')
+        # 组合回新的网址
+        modified_url = f"{base_url}?{modified_query_string}"
+    else:
+        modified_url = url  # 如果没有问号，则不做任何更改
+
+    return modified_url
+
+
+def get_directories(path):
+    """获取指定路径下的所有目录，并按自然排序"""
+    return natsorted([d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))])
+
+
+def move_files(base_path, directories, target_directory):
+    """将目录中的文件移动到目标目录"""
+    for directory in directories:
+        src_path = os.path.join(base_path, directory)
+        for file_name in os.listdir(src_path):
+            file_path = os.path.join(src_path, file_name)
+            if os.path.isfile(file_path):
+                shutil.move(file_path, target_directory)
+        # 删除原目录
+        os.rmdir(src_path)
