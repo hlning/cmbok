@@ -1,5 +1,5 @@
 import asyncio
-import datetime
+import json
 import logging
 import math
 import os
@@ -8,28 +8,45 @@ import re
 import time
 import traceback
 import uuid
+<<<<<<< HEAD
+from dataclasses import dataclass
+=======
+>>>>>>> origin/main
 
 import aiohttp
 import httpx
 import requests
 from PyQt5.QtCore import QThread, QMutex, pyqtSignal
-from bs4 import BeautifulSoup
 from ebooklib import epub
 from httpcore import ConnectTimeout
 from natsort import natsorted
 
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
+<<<<<<< HEAD
+from utils.base_utils import get_current_time, get_file_extension, deal_url
+from utils.client_util import create_api_client
+from utils.utils_book_type_convert import img_to_pdf, convert_epub_to_mobi
+from utils.utils_files_and_folders import delete_files_with_character, del_file, del_folder, del_folder_images
+=======
 from common.util import get_current_time, analyze_data, del_folder_images, del_folder, img_to_pdf, \
     convert_epub_to_mobi, del_file, delete_files_with_character, get_file_extension, deal_url
+>>>>>>> origin/main
 from view.download_interface import book_process_signals, download_signals, comic_process_signals
 
 comic_search_lock = QMutex()
 book_search_lock = QMutex()
 download_comic_lock = QMutex()
 
-URL = 'https://www.mangacopy.com/'
+URL = 'https://api.copy2000.online/'
 WEBSITE = 'https://www.copymanga.com/'
+<<<<<<< HEAD
+CMBOK_WEBSITE = 'http://154.40.47.143:5000/'
+
+
+# CMBOK_WEBSITE = 'http://x.x.x.x:5000/'
+# CMBOK_WEBSITE = 'http://127.0.0.1:5000/'
+=======
 SEARCH_WEBSITE = 'https://api.mangacopy.com/'
 CMBOK_WEBSITE = 'http://154.40.47.143:5000/'
 #CMBOK_WEBSITE = 'http://127.0.0.1:5000/'
@@ -41,21 +58,31 @@ API_HEADER = {
     "platform": "1",
     "referer": WEBSITE
 }
+>>>>>>> origin/main
 
 
 # 搜索图书
+@dataclass
+class Book:
+    book_name: str
+    start_date: str
+    end_date: str
+    language: str
+    extensions: str
+
+
 class BookSearch(QThread):
     success = pyqtSignal(object, object)
 
-    def __init__(self, book_name, index=0):
+    def __init__(self, book, index=0):
         super(BookSearch, self).__init__()
-        self.book_name = book_name
+        self.book = book
         self.index = index
 
     def run(self):
         book_search_lock.lock()
         try:
-            url = f'{CMBOK_WEBSITE}cmbok/zlibrary/search/{self.book_name}/{self.index}'
+            url = f'{CMBOK_WEBSITE}cmbok/zlibrary/advanced_search/{self.book.book_name}/{self.book.start_date}/{self.book.end_date}/{self.book.language}/{self.book.extensions}/{self.index}'
             response = requests.get(url, timeout=30)
             response.raise_for_status()
             if response.status_code == 200:
@@ -300,10 +327,11 @@ class ComicSearch(QThread):
     def run(self):
         comic_search_lock.lock()
         try:
-            url = f"{SEARCH_WEBSITE}api/v3/search/comic?format=json&platform=3&q={self.comic_name}&limit=27&offset={self.offset * 27}"
-            response = requests.get(url, headers=API_HEADER, proxies=self.PROXIES, timeout=15)
+            url = f"{URL}api/v3/search/comic?format=json&platform=3&q={self.comic_name}&limit=27&offset={self.offset * 27}"
+            api_client = create_api_client()
+            response = api_client("GET", url)
             if response.status_code == 200:
-                data = response.json()
+                data = json.loads(response.text)
                 results = data["results"]
                 self.success.emit('success', results)
             else:
@@ -320,21 +348,22 @@ class ComicSearch(QThread):
             comic_search_lock.unlock()
 
 
-# 获取漫画目录信息
-class ComicChapters(QThread):
+# 获取漫画分组信息
+class ComicGroups(QThread):
     success = pyqtSignal(object, object)
 
     def __init__(self, path_word):
-        super(ComicChapters, self).__init__()
+        super(ComicGroups, self).__init__()
         self.path_word = path_word
 
     def run(self):
-        comic_search_lock.lock()
         try:
-            response = requests.get(f"{URL}comicdetail/{self.path_word}/chapters", timeout=30)
+            url = f"{URL}api/v3/comic2/{self.path_word}"
+            api_client = create_api_client()
+            response = api_client("GET", url)
             if response.status_code == 200:
-                data = response.json()
-                results = analyze_data(str(data['results']))
+                data = json.loads(response.text)
+                results = {'comic_path_word': self.path_word, 'groups': data['results']['groups']}
                 self.success.emit('success', results)
             else:
                 self.success.emit('fail', None)
@@ -345,31 +374,78 @@ class ComicChapters(QThread):
         except Exception as e:
             self.success.emit('error', None)
             logging.info(traceback.format_exc())
-            logging.info('获取漫画目录信息失败')
-        finally:
-            comic_search_lock.unlock()
+            logging.info('获取漫画分组信息失败')
+
+
+# 获取漫画章节信息
+class ComicChapters(QThread):
+    success = pyqtSignal(object, object)
+
+    def __init__(self, comic_path_word, group_path_word, group_count):
+        super(ComicChapters, self).__init__()
+        self.comic_path_word = comic_path_word
+        self.group_path_word = group_path_word
+        self.group_count = group_count
+
+    def run(self):
+        chapters = []
+        limit = 500  # 每次请求的数量
+        offset = 0
+        try:
+            while offset < self.group_count:
+                url = f"{URL}api/v3/comic/{self.comic_path_word}/group/{self.group_path_word}/chapters?limit={limit}&offset={offset}"
+                api_client = create_api_client()
+                response = api_client("GET", url)
+                if response.status_code == 200:
+                    data = json.loads(response.text)
+                    list_data = data['results'].get('list', [])
+                    chapters.extend(list_data)
+                    # 更新 offset
+                    offset += limit
+                    # 如果剩余的数量少于 limit，可能最后一次请求不到 limit 数量
+                    if len(list_data) < limit:
+                        self.success.emit('success', chapters)
+                        break
+                else:
+                    self.success.emit('fail', None)
+                    return  # 请求失败就退出
+        except requests.exceptions.Timeout:
+            self.success.emit('timeout', None)
+            logging.info(traceback.format_exc())
+            logging.info('请求超时')
+        except Exception as e:
+            self.success.emit('error', None)
+            logging.info(traceback.format_exc())
+            logging.info('获取漫画章节信息失败')
 
 
 # 查询收藏记录
 class ComicCollects(QThread):
     success = pyqtSignal(object, object)
 
-    def __init__(self, index, text, type):
+    def __init__(self, index, text, type, folder_id):
         super(ComicCollects, self).__init__()
         self.index = index
         self.text = text
         self.type = type
+        self.folder_id = folder_id
 
     def run(self):
         sqlite_util = SQLiteDatabase()
         try:
-            # 查询收藏记录
-            comics = sqlite_util.query_data('cmbok_collection_record',
-                                            conditions={'name': f'%{self.text}%', 'type': self.type},
-                                            order_by='collection_time DESC', limit=16,
-                                            offset=self.index * 16)
+            # 查询文件夹 + 收藏记录
+            if self.text is not None and self.text != '':
+                datas = sqlite_util.query_records(
+                    conditions={'name': f'%{self.text}%', 'type': self.type},
+                    order_by='collection_time DESC', limit=16,
+                    offset=self.index * 16)
+            else:
+                datas = sqlite_util.query_folder_records(
+                    conditions={'name': f'%{self.text}%', 'type': self.type, 'folder_id': self.folder_id},
+                    limit=16,
+                    offset=self.index * 16)
 
-            self.success.emit('success', comics)
+            self.success.emit('success', datas)
         except Exception as e:
             self.success.emit('error', None)
             logging.info(traceback.format_exc())
@@ -470,21 +546,23 @@ class ComicDownload(QThread):
                                                                                     'author': comic_author,
                                                                                     'key': comic_path_word,
                                                                                     'chapter_name': chapter['name'],
-                                                                                    'chapter_path_word': chapter['id'],
+                                                                                    'chapter_path_word': chapter[
+                                                                                        'uuid'],
                                                                                     'status': 2,
                                                                                     'process': 0,
                                                                                     'type': 1,
                                                                                     'start_time': ''})
-                    id_map[comic_path_word + chapter['id']] = history_id
+                    id_map[comic_path_word + chapter['uuid']] = history_id
 
                 for chapter in chapters:
-                    chapter_images = self.get_chapter_images(comic_path_word, chapter['id'])
+                    chapter_images = self.get_chapter_images(comic_path_word, chapter['uuid'])
 
                     if chapter_images is not None:
                         shared_data = {'process': 0}
                         # 每次同时下载指定数量的章节
                         task = asyncio.create_task(
-                            self.start_download_chapter_images(id_map[comic_path_word + chapter['id']], chapter_images,
+                            self.start_download_chapter_images(id_map[comic_path_word + chapter['uuid']],
+                                                               chapter_images,
                                                                comic_path_word, comic_name,
                                                                comic_author,
                                                                chapter['name'], shared_data))
@@ -492,7 +570,7 @@ class ComicDownload(QThread):
                         # 下载记录更新状态
                         sqlite_util.update_data('cmbok_download_history',
                                                 {'status': 1, 'start_time': get_current_time()},
-                                                {'id': id_map[comic_path_word + chapter['id']]})
+                                                {'id': id_map[comic_path_word + chapter['uuid']]})
                         download_signals.success.emit('update', comic_name, chapter['name'], 1)
                         # 如果达到并发章节限制，则等待当前任务完成
                         if len(chapter_tasks) >= cfg.get(cfg.downloadThreadNum):
@@ -504,7 +582,7 @@ class ComicDownload(QThread):
                         # 下载记录更新状态
                         sqlite_util.update_data('cmbok_download_history',
                                                 {'status': -2},
-                                                {'id': id_map[comic_path_word + chapter['id']]})
+                                                {'id': id_map[comic_path_word + chapter['uuid']]})
                         download_signals.success.emit('fail', comic_name, chapter['name'], 1)
 
                 # 等待剩余的任务完成
@@ -635,13 +713,17 @@ class ComicDownload(QThread):
             sqlite_util.close()
         logging.info(f'{comic_name}{chapter_name}转换epub完成')
 
-    def get_chapter_images(self, book_name, chapter_id):
+    def get_chapter_images(self, comic_path_word, chapter_id):
         try:
-            response = requests.get(f"{URL}/comic/{book_name}/chapter/{chapter_id}").content
-            data = analyze_data(
-                BeautifulSoup(response, 'html.parser').find(name="div", attrs={"class": "imageData"}).attrs[
-                    'contentkey'])
-            return [i['url'] for i in data]
+            url = f"{URL}/api/v3/comic/{comic_path_word}/chapter/{chapter_id}"
+            api_client = create_api_client()
+            response = api_client("GET", url)
+            if response.status_code == 200:
+                data = json.loads(response.text)
+                results = data['results']['chapter']['contents']
+                return [i['url'] for i in results]
+            else:
+                return None
         except Exception as e:
             logging.info('获取图片失败')
 

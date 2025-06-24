@@ -1,38 +1,34 @@
+# coding:utf-8
 import logging
-import os
-import sys
+import time
 import traceback
+from pathlib import Path
 
-<<<<<<< HEAD
-from PyQt5.QtCore import Qt, QTranslator
-from PyQt5.QtWidgets import QApplication
-from qfluentwidgets import FluentTranslator
-=======
 import requests
-from PyQt5.QtCore import Qt, QTranslator, QSize, QUrl
+from PyQt5.QtCore import Qt, QSize, QUrl
 from PyQt5.QtGui import QIcon, QImage, QDesktopServices
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication, QDesktopWidget
 from qfluentwidgets import FluentIcon as FIF, SplashScreen, InfoBarIcon, InfoBarPosition, TeachingTip, \
-    TeachingTipTailPosition, Icon
+    TeachingTipTailPosition
 from qfluentwidgets import NavigationItemPosition, FluentWindow, SubtitleLabel, setFont, NavigationAvatarWidget, \
-    MessageBox, FluentTranslator, toggleTheme
->>>>>>> origin/main
+    MessageBox, toggleTheme
 
-from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
-<<<<<<< HEAD
-from view.main_window import Window
-=======
-from common.util import check_url, clean_file
-from common.view_util import info_bar_tip
+from resource import resource
+from common.config import VERSION_NO, LOG_PATH, cfg
 from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import CMBOK_WEBSITE
+from utils.base_utils import check_url
+from utils.komga_utils import start_komga, stop_komga
+from utils.utils_files_and_folders import clean_file
 from view.book_interface import BookInterface
 from view.collect_interface import CollectInterface
 from view.comic_interface import ComicInterface
+from view.components.info_bar_tip import show_tip
 from view.download_interface import DownloadInterface
+from view.file_manager_interface import FileManagerInterface
 from view.setting_interface import SettingInterface
-from resource import resource
+from view.tool_interface import ToolInterface
 from view.website_interface import WebsiteInterface
 
 
@@ -65,27 +61,39 @@ class Window(FluentWindow):
         self.bookInterface = BookInterface(self)
         # 漫画网站窗口
         self.websiteInterface = WebsiteInterface(self)
+        # 文件管理窗口
+        self.fileManagerInterface = FileManagerInterface(self)
         # 收藏记录窗口
         self.collectInterface = CollectInterface(self)
         # 下载记录窗口
-        self.downloadInterface = DownloadInterface()
+        self.downloadInterface = DownloadInterface(self)
+        # 工具窗口
+        self.toolInterface = ToolInterface(self)
         # 设置窗口
         self.settingInterface = SettingInterface(self)
         # 初始化侧边栏
         self.initNavigation()
         # 监听当前导航项变化的信号
         self.stackedWidget.currentChanged.connect(self.on_navigation_changed)
+        # 更新配置文件中的版本号
+        cfg.set(cfg.version, VERSION_NO)
         # 配置日志记录
         self.setup_logging()
         # 清理日志文件
         clean_file(LOG_PATH)
-
+        # 检测komga是否随应用启动运行
+        self.run_komga()
         # 加点时间，看起来有动画
         time.sleep(0.5)
         # 隐藏启动页面
         self.splashScreen.finish()
         # 看是否有新版本或公告
         self.get_version()
+
+    # 运行komga
+    def run_komga(self):
+        if cfg.get(cfg.isRunKomga):
+            start_komga()
 
     # 检查版本
     def get_version(self):
@@ -129,8 +137,8 @@ class Window(FluentWindow):
                 if response.status_code == 200:
                     results = response.json()
                     if results['notification'] != '':
-                        info_bar_tip(InfoBarIcon.INFORMATION, '公告信息', results['notification'], self,
-                                     InfoBarPosition.TOP, duration=-1)
+                        show_tip(InfoBarIcon.INFORMATION, '公告信息', results['notification'], self,
+                                 InfoBarPosition.TOP, duration=15 * 1000)
         except Exception:
             logging.info(traceback.format_exc())
             logging.info('服务器已关闭')
@@ -141,11 +149,11 @@ class Window(FluentWindow):
             # 默认更新站点记录
             self.websiteInterface.updateWebsiteRecords(1)
             self.websiteInterface.updateWebsiteRecords(2)
-        if index == 3:
+        if index == 4:
             # 默认更新收藏记录
             self.collectInterface.updateComicRecords(1)
             self.collectInterface.updateComicRecords(2)
-        if index == 4:
+        if index == 5:
             # 默认更新下载记录
             self.downloadInterface.updateComicRecords(1)
             self.downloadInterface.updateComicRecords(2)
@@ -156,16 +164,18 @@ class Window(FluentWindow):
         self.addSubInterface(self.bookInterface, MyFluentIcon.BOOK, '图书')
         self.addSubInterface(self.websiteInterface, MyFluentIcon.WEBSITE, '网站')
         self.navigationInterface.addItem(
-            routeKey='Koodoreader',
-            icon=MyFluentIcon.KOODOREADER,
-            text='Koodoreader',
-            onClick=self.onKoodoreader,
+            routeKey='Komga',
+            icon=MyFluentIcon.KOGMA,
+            text='Komga',
+            onClick=self.onKomga,
             selectable=False,
-            tooltip='Koodoreader',
+            tooltip='Komga',
             position=NavigationItemPosition.TOP
         )
+        self.addSubInterface(self.fileManagerInterface, MyFluentIcon.FILE_MANAGER, '文件管理')
         self.addSubInterface(self.collectInterface, MyFluentIcon.COLLECT, '收藏')
         self.addSubInterface(self.downloadInterface, FIF.DOWNLOAD, '下载')
+        self.addSubInterface(self.toolInterface, MyFluentIcon.TOOL, '工具箱')
         self.navigationInterface.addSeparator()
 
         self.navigationInterface.addWidget(
@@ -186,11 +196,11 @@ class Window(FluentWindow):
         self.addSubInterface(
             self.settingInterface, FIF.SETTING, '设置', NavigationItemPosition.BOTTOM)
 
-    def onKoodoreader(self):
-        QDesktopServices.openUrl(QUrl('https://web.koodoreader.com/'))
+    def onKomga(self):
+        QDesktopServices.openUrl(QUrl('http://127.0.0.1:25600/'))
 
     def initWindow(self):
-        self.setFixedWidth(950)
+        self.setFixedWidth(cfg.get(cfg.windowWidth))
         # 获取当前屏幕的分辨率
         screen = QDesktopWidget().screenGeometry()
         height = screen.height()
@@ -255,6 +265,8 @@ class Window(FluentWindow):
         logging.info("应用程序启动")
 
     def closeEvent(self, event):
+        # 关闭komga
+        stop_komga()
         with SQLiteDatabase() as db:
             historys = db.query_data('cmbok_download_history', {'status': 1})
             if len(historys) > 0:
@@ -272,46 +284,3 @@ class Window(FluentWindow):
         # 更新下载任务
         with SQLiteDatabase() as db:
             db.update_data('cmbok_download_history', {'status': -3}, {'status': 1})
-
->>>>>>> origin/main
-
-if __name__ == '__main__':
-    try:
-        # enable dpi scale
-        if cfg.get(cfg.dpiScale) == "Auto":
-            QApplication.setHighDpiScaleFactorRoundingPolicy(
-                Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-        else:
-            os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
-            os.environ["QT_SCALE_FACTOR"] = str(cfg.get(cfg.dpiScale))
-
-        QApplication.setHighDpiScaleFactorRoundingPolicy(
-            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
-        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
-
-        # 初始化数据库
-        sqlite_util = SQLiteDatabase()
-        sqlite_util.init()
-
-        app = QApplication(sys.argv)
-        # internationalization
-        locale = cfg.get(cfg.language).value
-        translator = FluentTranslator(locale)
-        galleryTranslator = QTranslator()
-        galleryTranslator.load(locale, "cmbok", ".", ":/cmbok/i18n")
-
-        app.installTranslator(translator)
-        app.installTranslator(galleryTranslator)
-
-        w = Window()
-        w.show()
-<<<<<<< HEAD
-        sys.exit(app.exec_())
-=======
-        app.exec()
->>>>>>> origin/main
-    except Exception as e:
-        logging.info("发生异常：", e)
-        logging.info(traceback.format_exc())

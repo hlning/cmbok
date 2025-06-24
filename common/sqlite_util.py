@@ -5,7 +5,11 @@ import traceback
 
 import requests
 
+<<<<<<< HEAD
+from utils.base_utils import check_url
+=======
 from common.util import check_url
+>>>>>>> origin/main
 
 
 class Row:
@@ -72,12 +76,41 @@ class SQLiteDatabase:
         # book_extension 图书文件类型
         # type 类型。1：漫画 2：图书
         # collection_time 收藏时间
+<<<<<<< HEAD
+        # folder_id 文件夹id
+=======
+>>>>>>> origin/main
         flag = self.check_table_exists('cmbok_collection_record')
         if not flag:
             self.create_table('cmbok_collection_record',
                               {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
                                'author': 'TEXT', 'key': 'TEXT', 'book_hash': 'TEXT', 'book_extension': 'TEXT',
+<<<<<<< HEAD
+                               'type': 'INTEGER', 'collection_time': 'TEXT', 'folder_id': 'INTEGER'})
+        else:
+            # 检查folder_id字段是否存在
+            is_exists = self.column_exists('cmbok_collection_record', 'folder_id')
+            if not is_exists:
+                # 更新cmbok_collection_record表结构
+                self.cursor.execute('ALTER TABLE cmbok_collection_record ADD COLUMN folder_id INTEGER')
+
+        # 收藏文件夹
+        # name 文件夹名称
+        # icon 图标
+        # type 类型。1：漫画 2：图书
+        # parent_id 父文件夹
+        # add_time 添加时间
+        flag = self.check_table_exists('comic_collection_folder')
+        if not flag:
+            self.create_table('comic_collection_folder',
+                              {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
+                               'type': 'INTEGER', 'parent_id': 'INTEGER', 'add_time': 'TEXT'})
+
+            # 更新文件夹id
+            self.update_data('cmbok_collection_record', {'folder_id': 0})
+=======
                                'type': 'INTEGER', 'collection_time': 'TEXT'})
+>>>>>>> origin/main
 
         # 创建站点下载记录表
         # comic_name 漫画/图书名称
@@ -101,6 +134,10 @@ class SQLiteDatabase:
                                'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
                                'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
                                'img_dom': 'TEXT'})
+<<<<<<< HEAD
+
+=======
+>>>>>>> origin/main
         # 同步站点数据
         self.delete_all_data('comic_website')
         try:
@@ -137,6 +174,21 @@ class SQLiteDatabase:
             return True
         else:
             return False
+<<<<<<< HEAD
+
+    def column_exists(self, table_name, column_name):
+        # 执行 PRAGMA table_info 查询以获取表的字段信息
+        self.cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = self.cursor.fetchall()
+
+        # 遍历字段信息，检查特定字段是否存在
+        for column in columns:
+            if column[1] == column_name:  # column[1] 是字段名称
+                return True
+
+        return False
+=======
+>>>>>>> origin/main
 
     def create_table(self, table_name, columns):
         """创建表"""
@@ -154,11 +206,21 @@ class SQLiteDatabase:
         self.connection.commit()
         return self.cursor.lastrowid  # 返回插入后的 ID
 
+    def query_records(self, conditions=None, order_by=None, limit=None, offset=None):
+        sql = '''select id,cover,name,author,key,book_hash,book_extension,'record' is_folder,type,collection_time,folder_id from cmbok_collection_record'''
+        return self.query_result(sql, conditions, order_by, limit, offset)
+
+    def query_folder_records(self, conditions=None, order_by=None, limit=None, offset=None):
+        sql = '''select * from (select * from (select id,icon cover,name,'' author,'' key,'' book_hash,'' book_extension,'folder' is_folder,type,add_time,parent_id folder_id from comic_collection_folder order by add_time desc) union all select * from (select id,cover,name,author,key,book_hash,book_extension,'record' is_folder,type,collection_time,folder_id from cmbok_collection_record order by collection_time desc))'''
+        return self.query_result(sql, conditions, order_by, limit, offset)
+
     def query_data(self, table_name, conditions=None, order_by=None, limit=None, offset=None):
         """查询数据，支持分页"""
         sql = f"SELECT * FROM {table_name}"
-        params = []
+        return self.query_result(sql, conditions, order_by, limit, offset)
 
+    def query_result(self, sql, conditions=None, order_by=None, limit=None, offset=None):
+        params = []
         if conditions:
             condition_clauses = []
             for key, value in conditions.items():
@@ -213,17 +275,21 @@ class SQLiteDatabase:
                         params.append(value)
 
             if condition_clauses:
-                sql += " WHERE " + " OR ".join(condition_clauses)  # 使用 OR 连接条件
+                sql += " WHERE " + " AND ".join(condition_clauses)  # 使用 OR 连接条件
 
         sql += ";"
         return self.cursor.execute(sql, params).fetchone()[0]  # 返回计数结果
 
-    def update_data(self, table_name, data, conditions):
+    def update_data(self, table_name, data, conditions=None):
         """更新数据"""
         set_str = ', '.join([f"{key} = ?" for key in data.keys()])
-        condition_str = ' AND '.join([f"{key} = ?" for key in conditions.keys()])
-        sql = f"UPDATE {table_name} SET {set_str} WHERE {condition_str};"
-        self.cursor.execute(sql, tuple(data.values()) + tuple(conditions.values()))
+        if conditions is not None:
+            condition_str = ' AND '.join([f"{key} = ?" for key in conditions.keys()])
+            sql = f"UPDATE {table_name} SET {set_str} WHERE {condition_str};"
+            self.cursor.execute(sql, tuple(data.values()) + tuple(conditions.values()))
+        else:
+            sql = f"UPDATE {table_name} SET {set_str};"
+            self.cursor.execute(sql, tuple(data.values()))
         self.connection.commit()
 
     def delete_data(self, table_name, conditions):

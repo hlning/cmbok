@@ -6,8 +6,12 @@ import traceback
 
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices
+<<<<<<< HEAD
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem
+=======
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QSizePolicy, \
     QStyle
+>>>>>>> origin/main
 from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
     PipsPager, PipsScrollButtonDisplayMode, TableWidget, \
     RoundMenu, Action, ProgressRing
@@ -15,8 +19,8 @@ from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, Flue
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
-from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
+from view.components.info_bar_tip import show_tip
 
 
 # 定义全局信号槽类
@@ -45,9 +49,7 @@ comic_process_signals = ComicProcessSignals()
 class DownloadInterface(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
-
         self.setObjectName('DownloadInterface')
-        self.resize(400, 400)
 
         self.pivot = SegmentedToolWidget(self)
         self.stackedWidget = QStackedWidget(self)
@@ -94,16 +96,23 @@ class DownloadInterface(QWidget):
     # 下载完成
     def downloadFinish(self, status, name, chapter_name, type=1):
         if status == 'success':
-            info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', f"{name}-{chapter_name}下载完成，o(￣▽￣)ｄ", self,
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', f"{name}-{chapter_name}下载完成，o(￣▽￣)ｄ", self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'fail':
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"{name}-{chapter_name}下载失败，(꒦_꒦)", self,
+            show_tip(InfoBarIcon.ERROR, '温馨提示', f"{name}-{chapter_name}下载失败，(꒦_꒦)", self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'no_account':
+<<<<<<< HEAD
+            show_tip(InfoBarIcon.ERROR, '温馨提示', f"今日已无法下载，明天再来吧(*^▽^*)", self,
+                         InfoBarPosition.TOP_RIGHT)
+        elif status == 'no_num':
+            show_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
+=======
             info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"今日已无法下载，明天再来吧(*^▽^*)", self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'no_num':
             info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
+>>>>>>> origin/main
                          InfoBarPosition.TOP_RIGHT)
 
         self.updateComicRecords(type)
@@ -259,9 +268,9 @@ class DownloadWidget(QWidget):
         try:
             sqlite_util.delErrorRecord('cmbok_download_history')
             self.search(self.lineEdit.text())
-            info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', '清空记录成功', self)
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '清空记录成功', self)
         except Exception:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '清空记录失败', self)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '清空记录失败', self)
             sqlite_util.rollback()
             logging.info(traceback.format_exc())
             logging.info('删除下载记录异常')
@@ -274,9 +283,9 @@ class DownloadWidget(QWidget):
         try:
             sqlite_util.delete_data('cmbok_download_history', {'type': self.type})
             self.search(self.lineEdit.text())
-            info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', '清空记录成功', self)
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '清空记录成功', self)
         except Exception:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '清空记录失败', self)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '清空记录失败', self)
             sqlite_util.rollback()
             logging.info(traceback.format_exc())
             logging.info('删除下载记录异常')
@@ -289,9 +298,9 @@ class DownloadWidget(QWidget):
         try:
             sqlite_util.delete_data('cmbok_download_history', {'id': id})
             self.search(self.lineEdit.text())
-            info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', '删除记录成功', self)
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '删除记录成功', self)
         except Exception:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '删除记录失败', self)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '删除记录失败', self)
             sqlite_util.rollback()
             logging.info(traceback.format_exc())
             logging.info('删除下载记录异常')
@@ -304,7 +313,7 @@ class DownloadWidget(QWidget):
         if os.path.exists(folder_path):
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
         else:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '目录不存在', self)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '目录不存在', self)
 
     # 表格每列宽度
     def reset_bookview_size(self):

@@ -1,4 +1,5 @@
 # coding:utf-8
+import datetime
 import logging
 import math
 import re
@@ -10,14 +11,16 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
 from qfluentwidgets import FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
     PipsScrollButtonDisplayMode, FluentIcon, TransparentToolButton, BodyLabel, InfoBarPosition, InfoBarIcon, \
-    CaptionLabel
+    CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton
 
+from common.const import language_item
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
-from common.util import truncate_string, get_current_time
-from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
-from service.cmbok_service import BookSearch, BookDownload
+from service.cmbok_service import BookSearch, Book, BookDownload
+from utils.base_utils import truncate_string, get_current_time
+from view.components.folder_tree import TreeFrame
+from view.components.info_bar_tip import show_tip
 
 
 # 搜索区域
@@ -27,16 +30,75 @@ class BookSearchCardView(QWidget):
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent=parent)
+
+        self.book_list = []
+        self.book_name = ''
+        self.is_search = True
+        self.stateTooltip = None
+
+        self.vBoxLayout = QVBoxLayout(self)
+
         self.titleLabel = QLabel(title, self)
+        self.vBoxLayout.addWidget(self.titleLabel)
+
+        # 搜索输入框
+        self.hBoxLayout1 = QHBoxLayout()
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(700)
         self.lineEdit.setPlaceholderText('请输入图书名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchBook(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
 
-        self.book_list = []
-        self.book_name = ''
-        self.is_search = True
+        # 重置按钮
+        self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
+        self.resetBtn.clicked.connect(self.reset)
+
+        self.hBoxLayout1.addWidget(self.lineEdit)
+        self.hBoxLayout1.addWidget(self.resetBtn)
+
+        self.vBoxLayout.addLayout(self.hBoxLayout1)
+
+        # 精确搜索
+        self.hBoxLayout2 = QHBoxLayout()
+        # 年份数组
+        # 获取当前年份
+        current_year = datetime.datetime.now().year
+        # 从1800年到当前年份，添加到数组中
+        # 生成从 1800 到当前年份的列表
+        years = list(range(1800, current_year + 1))
+        # 倒序添加到新数组
+        reversed_years = [str(year) for year in reversed(years)]
+
+        # 起始年份
+        self.startDateComboBox = ComboBox()
+        # 添加选项
+        items = ['起始年份'] + reversed_years
+        self.startDateComboBox.addItems(items)
+
+        # 截止年份
+        self.endDateComboBox = ComboBox()
+        # 添加选项
+        items = ['截止年份'] + reversed_years
+        self.endDateComboBox.addItems(items)
+
+        # 语言
+        self.languageComboBox = ComboBox()
+
+        # 添加选项
+        for key, value in language_item.items():
+            self.languageComboBox.addItem(value, userData=key)
+
+        # 格式
+        self.extensionsComboBox = ComboBox()
+        # 添加选项
+        items = ['格式', 'EPUB', 'AZW', 'AZW3', 'MOBI', 'PDF', 'TXT', 'CBZ', 'DJV', 'DJVU', 'FB2', 'LIT', 'RTF']
+        self.extensionsComboBox.addItems(items)
+
+        self.hBoxLayout2.addWidget(self.startDateComboBox)
+        self.hBoxLayout2.addWidget(self.endDateComboBox)
+        self.hBoxLayout2.addWidget(self.languageComboBox)
+        self.hBoxLayout2.addWidget(self.extensionsComboBox)
+        self.vBoxLayout.addLayout(self.hBoxLayout2)
 
         # 分页器
         self.pager = PipsPager(Qt.Horizontal)
@@ -48,24 +110,26 @@ class BookSearchCardView(QWidget):
         # 页码切换
         self.pager.currentIndexChanged.connect(lambda index: self.getBooks(index))
 
-        self.vBoxLayout = QVBoxLayout(self)
         self.flowLayout = FlowLayout()
 
-        self.stateTooltip = None
-
-        self.vBoxLayout.setContentsMargins(36, 0, 36, 0)
+        self.vBoxLayout.setContentsMargins(15, 0, 36, 0)
         self.vBoxLayout.setSpacing(10)
         self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.flowLayout.setHorizontalSpacing(12)
         self.flowLayout.setVerticalSpacing(12)
-
-        self.vBoxLayout.addWidget(self.titleLabel)
-        self.vBoxLayout.addWidget(self.lineEdit)
         self.vBoxLayout.addLayout(self.flowLayout, 1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter | Qt.AlignVCenter)
 
         self.titleLabel.setObjectName('viewTitleLabel')
         StyleSheet.SAMPLE_CARD.apply(self)
+
+    # 重置搜索条件
+    def reset(self):
+        self.lineEdit.setText('')
+        self.startDateComboBox.setCurrentIndex(0)
+        self.endDateComboBox.setCurrentIndex(0)
+        self.languageComboBox.setCurrentIndex(0)
+        self.extensionsComboBox.setCurrentIndex(0)
 
     # 回车搜索
     def enter(self):
@@ -81,11 +145,23 @@ class BookSearchCardView(QWidget):
             self.stateTooltip.move(270, 25)
             self.stateTooltip.show()
 
-            self.bookSearch = BookSearch(book_name=text, index=index + 1)
+            # 获取精确搜索条件
+            # 起始年份
+            start_date = self.startDateComboBox.text()
+            # 截止年份
+            end_date = self.endDateComboBox.text()
+            # 语言
+            language = self.languageComboBox.itemData(self.languageComboBox.currentIndex())
+            # 格式
+            extensions = self.extensionsComboBox.text()
+
+            book = Book(book_name=text, start_date=start_date, end_date=end_date, language=language,
+                        extensions=extensions)
+            self.bookSearch = BookSearch(book=book, index=index + 1)
             self.bookSearch.success.connect(self.loadBookCard)
             self.bookSearch.start()
         elif text is not None and text == '':
-            info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '请输入图书名称进行搜索o(￣▽￣)ｄ', self)
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请输入图书名称进行搜索o(￣▽￣)ｄ', self)
 
     # 加载图书搜索结果区域
     def loadBookCard(self, status, results):
@@ -183,17 +259,15 @@ class BookCard(CardWidget):
         self.iconWidget.setFixedSize(40, 50)
         self.load_image(self.cover)
 
-        self.nameLabel = BodyLabel(truncate_string(self.name, 15), self)
-        if len(self.name) > 15:
-            self.nameLabel.setToolTip(self.name)
-        self.authorLabel = CaptionLabel(truncate_string(self.author, 16), self)
-        if len(self.author) > 16:
-            self.authorLabel.setToolTip(self.author)
+        self.nameLabel = BodyLabel(truncate_string(self.name, 35), self)
+        self.nameLabel.setToolTip(self.name)
+        self.authorLabel = CaptionLabel(truncate_string(self.author, 36), self)
+        self.authorLabel.setToolTip(self.author)
 
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
 
-        self.setFixedSize(700, 73)
+        self.setFixedSize(750, 73)
         self.authorLabel.setTextColor("#606060", "#d2d2d2")
 
         self.hBoxLayout.setContentsMargins(20, 11, 11, 11)
@@ -297,25 +371,61 @@ class BookCard(CardWidget):
         sqlite_util = SQLiteDatabase()
         try:
             if not self.is_collect:
-                self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
                 # 收藏
-                sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
-                                                                    'name': self.name, 'author': self.author,
-                                                                    'key': self.book_id, 'book_hash': self.book_hash,
-                                                                    'book_extension': self.extension, 'type': 2,
-                                                                    'collection_time': get_current_time()})
-                self.is_collect = True
-                info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent(), InfoBarPosition.TOP)
+                w = TreeMessageBox(self.parent().parent())
+                if w.exec():
+                    # 遍历树节点获取选中的节点
+                    selected_items = w.treeFrame.tree.selectedItems()
+                    if selected_items:
+                        # 如果有选中的项，获取第一个选中项并输出名称
+                        selected_item = selected_items[0]
+                        folder_name = selected_item.text(0)  # 获取第一列的文本
+                        # 通过名称查询文件夹id
+                        folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 2})
+                        folder_id = 0 if folder_name == '首页' else folder[0].id
+
+                        sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
+                                                                            'name': self.name, 'author': self.author,
+                                                                            'key': self.book_id,
+                                                                            'book_hash': self.book_hash,
+                                                                            'book_extension': self.extension, 'type': 2,
+                                                                            'collection_time': get_current_time(),
+                                                                            'folder_id': folder_id})
+                        self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
+                        self.is_collect = True
+                        show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent(), InfoBarPosition.TOP)
             else:
                 self.collectBtn.setIcon(MyFluentIcon.COLLECT)
                 # 取消收藏
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.book_id, 'type': 2})
                 self.is_collect = False
-                info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent(), InfoBarPosition.TOP)
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent(), InfoBarPosition.TOP)
         except Exception:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
             sqlite_util.rollback()
             logging.info('收藏图书异常')
             logging.info(traceback.format_exc())
         finally:
             sqlite_util.close()
+
+
+# 树形菜单
+class TreeMessageBox(MessageBoxBase):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.treeFrame = TreeFrame(2)
+        self.viewLayout.addWidget(self.treeFrame)
+
+        self.yesButton.setText('确定')
+        self.cancelButton.setText('取消')
+
+        self.widget.setMinimumWidth(350)
+
+    def validate(self):
+        isValid = True
+        selected_items = self.treeFrame.tree.selectedItems()
+        if not selected_items:
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请选择一个文件夹', self)
+            isValid = False
+        return isValid

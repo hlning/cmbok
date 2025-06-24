@@ -5,14 +5,15 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
 from qfluentwidgets import ScrollArea, isDarkTheme, InfoBarIcon, InfoBarPosition
 
 from common.style_sheet import StyleSheet
-from common.view_util import info_bar_tip
-from components.comic_search_card import ComicSearchCardView
-from components.link_card import LinkCardView
+from view.components.comic_search_card import ComicSearchCardView
+from view.components.info_bar_tip import show_tip
+from view.components.link_card import LinkCardView
 
 
 class ComicInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self.setObjectName('ComicInterface')
 
         self.view = QWidget(self)
         self.vBoxLayout = QVBoxLayout(self.view)
@@ -23,7 +24,6 @@ class ComicInterface(ScrollArea):
         self.basicInputView.success.connect(self.infoShow)
 
         self.__initWidget()
-
 
     def __initWidget(self):
         self.view.setObjectName('view')
@@ -42,13 +42,13 @@ class ComicInterface(ScrollArea):
 
     def infoShow(self, status):
         if status == 'success':
-            info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '开始下载，可以到下载窗口查看进度，o(￣▽￣)ｄ', self,
+            show_tip(InfoBarIcon.INFORMATION, '温馨提示', '开始下载，可以到下载窗口查看进度，o(￣▽￣)ｄ', self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'error':
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '下载失败，(。・＿・。)ﾉI’m sorry~', self,
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '下载失败，(。・＿・。)ﾉI’m sorry~', self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'lock':
-            info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '前一个任务还在下载，请等会再下载吧(*￣︶￣)', self,
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '前一个任务还在下载，请等会再下载吧(*￣︶￣)', self,
                          InfoBarPosition.TOP_RIGHT)
 
 

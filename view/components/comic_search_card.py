@@ -5,20 +5,25 @@ import re
 import traceback
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+<<<<<<< HEAD:view/components/comic_search_card.py
+from PyQt5.QtGui import QColor, QPixmap, QMovie, QDesktopServices
+=======
 from PyQt5.QtGui import QColor, QPixmap, QMovie
+>>>>>>> origin/main:components/comic_search_card.py
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget
 from qfluentwidgets import TextWrap, FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
     PipsScrollButtonDisplayMode, FluentIcon, TransparentToolButton, Flyout, \
     CheckBox, FlyoutViewBase, BodyLabel, PrimaryPushButton, FlyoutAnimationType, SegmentedWidget, \
-    SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon
+    SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog
 
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
-from common.util import truncate_string, get_current_time
-from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
-from service.cmbok_service import ComicSearch, ComicChapters, ComicChapterImages
+from service.cmbok_service import ComicSearch, ComicGroups, ComicChapters, ComicChapterImages
+from utils.base_utils import truncate_string, get_current_time
+from view.components.folder_tree import TreeFrame
+from view.components.info_bar_tip import show_tip
 
 
 # 搜索区域
@@ -82,14 +87,14 @@ class ComicSearchCardView(QWidget):
             self.is_search = is_search
 
             self.stateTooltip = StateToolTip('正在加载', '请耐心等待~~', self)
-            self.stateTooltip.move(320, 25)
+            self.stateTooltip.move(330, 25)
             self.stateTooltip.show()
 
             self.comicSearch = ComicSearch(comic_name=text, offset=offset)
             self.comicSearch.success.connect(self.loadComicCard)
             self.comicSearch.start()
         elif text is not None and text == '':
-            info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '请输入漫画名称进行搜索o(￣▽￣)ｄ', self)
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请输入漫画名称进行搜索o(￣▽￣)ｄ', self)
 
     # 加载漫画搜索结果区域
     def loadComicCard(self, status, comic):
@@ -105,10 +110,10 @@ class ComicSearchCardView(QWidget):
                 self.stateTooltip.setTitle('加载完成')
 
                 if comic is not None:
-                    # 清空流布局中的所有控件
-                    self.flowLayout.takeAllWidgets()
                     comics = comic['list']
                     if len(comics) > 0:
+                        # 清空流布局中的所有控件
+                        self.flowLayout.takeAllWidgets()
                         if self.is_search:
                             self.comic_list = comics
 
@@ -133,7 +138,8 @@ class ComicSearchCardView(QWidget):
                             page_index = self.pager.currentIndex()
                             index = int(comic['limit']) / int(int(comic['offset']))
                             self.getComics(page_index if page_index != index else index)
-
+                    else:
+                        self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
                 else:
                     self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
         except Exception as e:
@@ -183,12 +189,10 @@ class ComicCard(CardWidget):
         self.iconWidget.setScaledContents(True)  # 允许缩放
         self.iconWidget.setFixedSize(60, 85)
         self.load_image(self.cover)
-        self.titleLabel = QLabel(truncate_string(self.name, 8), self)
-        if len(self.name) > 8:
-            self.titleLabel.setToolTip(self.name)
+        self.titleLabel = QLabel(truncate_string(self.name, 18), self)
+        self.titleLabel.setToolTip(self.name)
         self.authorLabel = QLabel(TextWrap.wrap(self.author, 30, False)[0], self)
-        if len(self.author) > 30:
-            self.authorLabel.setToolTip(self.author)
+        self.authorLabel.setToolTip(self.author)
 
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
@@ -286,27 +290,62 @@ class ComicCard(CardWidget):
         sqlite_util = SQLiteDatabase()
         try:
             if not self.is_collect:
-                self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
                 # 收藏
-                sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
-                                                                    'name': self.name, 'author': self.author,
-                                                                    'key': self.path_word, 'type': 1,
-                                                                    'collection_time': get_current_time()})
-                self.is_collect = True
-                info_bar_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent())
+                w = TreeMessageBox(self.parent().parent())
+                if w.exec():
+                    # 遍历树节点获取选中的节点
+                    selected_items = w.treeFrame.tree.selectedItems()
+                    if selected_items:
+                        # 如果有选中的项，获取第一个选中项并输出名称
+                        selected_item = selected_items[0]
+                        folder_name = selected_item.text(0)  # 获取第一列的文本
+                        # 通过名称查询文件夹id
+                        folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 1})
+                        folder_id = 0 if folder_name == '首页' else folder[0].id
+
+                        sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
+                                                                            'name': self.name, 'author': self.author,
+                                                                            'key': self.path_word, 'type': 1,
+                                                                            'collection_time': get_current_time(),
+                                                                            'folder_id': folder_id})
+                        self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
+                        self.is_collect = True
+                        show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent())
             else:
                 self.collectBtn.setIcon(MyFluentIcon.COLLECT)
                 # 取消收藏
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.path_word, 'type': 1})
                 self.is_collect = False
-                info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent())
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent())
         except Exception:
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
             sqlite_util.rollback()
             logging.info(traceback.format_exc())
             logging.info('收藏漫画异常')
         finally:
             sqlite_util.close()
+
+
+# 树形菜单
+class TreeMessageBox(MessageBoxBase):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.treeFrame = TreeFrame(1)
+        self.viewLayout.addWidget(self.treeFrame)
+
+        self.yesButton.setText('确定')
+        self.cancelButton.setText('取消')
+
+        self.widget.setMinimumWidth(350)
+
+    def validate(self):
+        isValid = True
+        selected_items = self.treeFrame.tree.selectedItems()
+        if not selected_items:
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请选择一个文件夹', self)
+            isValid = False
+        return isValid
 
 
 # 下载自定义窗口
@@ -340,10 +379,10 @@ class DownloadFlyoutView(FlyoutViewBase):
         self.hBoxLayout.addWidget(self.iconWidget)
         self.vBoxLayout.addWidget(self.label)
 
-        # 目录类型导航栏
-        # 获取目录
-        self.comicChapters = ComicChapters(path_word=path_word)
-        self.comicChapters.success.connect(self.loadComicChapters)
+        # 分组类型导航栏
+        # 获取分组信息
+        self.comicChapters = ComicGroups(path_word=path_word)
+        self.comicChapters.success.connect(self.loadComicGroups)
         self.comicChapters.start()
         # 目录类型导航栏
 
@@ -391,22 +430,22 @@ class DownloadFlyoutView(FlyoutViewBase):
         self.stackedWidget.addWidget(widget)
         self.pivot.addItem(routeKey=objectName, text=text)
 
-    def loadComicChapters(self, status, results):
+    def loadComicGroups(self, status, results):
         try:
             if status == 'fail':
-                info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', self.parent(),
-                             InfoBarPosition.TOP_RIGHT)
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', self.parent(),
+                         InfoBarPosition.TOP_RIGHT)
             elif status == 'timeout':
-                info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '请求超时了，(。・＿・。)ﾉI’m sorry~', self.parent(),
-                             InfoBarPosition.TOP_RIGHT)
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '请求超时了，(。・＿・。)ﾉI’m sorry~', self.parent(),
+                         InfoBarPosition.TOP_RIGHT)
             elif status == 'error':
-                info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常，(。・＿・。)ﾉI’m sorry~', self.parent(),
-                             InfoBarPosition.TOP_RIGHT)
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常，(。・＿・。)ﾉI’m sorry~', self.parent(),
+                         InfoBarPosition.TOP_RIGHT)
             else:
                 self.vBoxLayout.addWidget(ChapterGroupView(results))
         except Exception as e:
             logging.info(traceback.format_exc())
-            logging.info('渲染漫画查询结果失败')
+            logging.info('获取漫画分组结果失败')
 
 
 # 目录分组导航窗口
@@ -422,7 +461,7 @@ class ChapterGroupView(QWidget):
         groups = data['groups']
         for key in groups:
             group = groups[key]
-            groupInterface = ChapterTypeView(group['chapters'])
+            groupInterface = ChapterTypeView(data['comic_path_word'], group['path_word'], group['count'])
             self.addSubInterface(groupInterface, group['name'], group['name'])
 
         self.vBoxLayout.addWidget(self.pivot)
@@ -445,41 +484,65 @@ class ChapterGroupView(QWidget):
 # 目录类型导航窗口
 class ChapterTypeView(QWidget):
 
-    def __init__(self, chapters, parent=None):
+    def __init__(self, comic_path_word, group_path_word, group_count, parent=None):
         super().__init__(parent)
         self.pivot = SegmentedWidget(self)
         self.stackedWidget = QStackedWidget(self)
         self.vBoxLayout = QVBoxLayout(self)
 
-        # type 1：话 2:卷 3:番外篇
-        # 根据 type 字段分组
-        grouped_data = {}
-        chapters.sort(key=lambda t: t['type'])
-        for item in chapters:
-            type_name = '話' if item['type'] == 1 else '卷' if item['type'] == 2 else '番外篇'
-            if type_name not in grouped_data:
-                grouped_data[type_name] = []
-            grouped_data[type_name].append(item)
-
-        # 添加目录明细
-        for type_name, chapter_list in grouped_data.items():
-            typeInterface = ChapterDetailView(chapter_list)
-            self.addSubInterface(typeInterface, type_name, type_name)
-
-        # 获取第一个分组
-        first_key = next(iter(grouped_data))
-        self.pivot.setCurrentItem(first_key)
-
-        self.pivot.currentItemChanged.connect(
-            lambda k: self.stackedWidget.setCurrentWidget(self.findChild(QWidget, k)))
-
-        self.vBoxLayout.addWidget(self.pivot)
-        self.vBoxLayout.addWidget(self.stackedWidget)
+        # 目录类型导航栏
+        # 获取目录
+        self.comicChapters = ComicChapters(comic_path_word=comic_path_word, group_path_word=group_path_word,
+                                           group_count=group_count)
+        self.comicChapters.success.connect(self.loadComicChapters)
+        self.comicChapters.start()
 
     def addSubInterface(self, widget, objectName, text):
         widget.setObjectName(objectName)
         self.stackedWidget.addWidget(widget)
         self.pivot.addItem(routeKey=objectName, text=text)
+
+    def loadComicChapters(self, status, chapters):
+        try:
+            if status == 'fail':
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', self.parent().parent().parent().parent(),
+                         InfoBarPosition.TOP_RIGHT)
+            elif status == 'timeout':
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '请求超时了，(。・＿・。)ﾉI’m sorry~',
+                         self.parent().parent().parent().parent(),
+                         InfoBarPosition.TOP_RIGHT)
+            elif status == 'error':
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常，(。・＿・。)ﾉI’m sorry~',
+                         self.parent().parent().parent().parent(),
+                         InfoBarPosition.TOP_RIGHT)
+            else:
+                # type 1：话 2:卷 3:番外篇
+                # 根据 type 字段分组
+                grouped_data = {}
+                chapters.sort(key=lambda t: t['type'])
+                for item in chapters:
+                    type_name = '話' if item['type'] == 1 else '卷' if item['type'] == 2 else '番外篇'
+                    if type_name not in grouped_data:
+                        grouped_data[type_name] = []
+                    grouped_data[type_name].append(item)
+
+                # 添加目录明细
+                for type_name, chapter_list in grouped_data.items():
+                    typeInterface = ChapterDetailView(chapter_list)
+                    self.addSubInterface(typeInterface, type_name, type_name)
+
+                # 获取第一个分组
+                first_key = next(iter(grouped_data))
+                self.pivot.setCurrentItem(first_key)
+
+                self.pivot.currentItemChanged.connect(
+                    lambda k: self.stackedWidget.setCurrentWidget(self.findChild(QWidget, k)))
+
+                self.vBoxLayout.addWidget(self.pivot)
+                self.vBoxLayout.addWidget(self.stackedWidget)
+        except Exception as e:
+            logging.info(traceback.format_exc())
+            logging.info('获取漫画目录结果失败')
 
 
 # 漫画目录明细窗口
@@ -570,7 +633,7 @@ class ChapterDetailView(QWidget):
             self.label.setText("请先选择章节再进行下载，o(￣▽￣)ｄ")
 
     def downloadComicStatus(self, status):
-        from view.collect_interface import CollectAreaInterface
+        from ..collect_interface import CollectAreaInterface
         current_widget = self.parent()
         while current_widget is not None:
             if isinstance(current_widget, ComicSearchCardView) or isinstance(current_widget, CollectAreaInterface):

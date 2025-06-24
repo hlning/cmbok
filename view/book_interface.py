@@ -5,14 +5,15 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from qfluentwidgets import ScrollArea, InfoBarPosition, InfoBarIcon
 
 from common.style_sheet import StyleSheet
-from common.view_util import info_bar_tip
-from components.book_search_card import BookSearchCardView
+from view.components.book_search_card import BookSearchCardView
+from view.components.info_bar_tip import show_tip
 
 
 # 图书窗口
 class BookInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self.setObjectName('BookInterface')
 
         self.view = QWidget(self)
         self.vBoxLayout = QVBoxLayout(self.view)
@@ -38,8 +39,8 @@ class BookInterface(ScrollArea):
     # 温馨提示
     def infoShow(self, status):
         if status == 'success':
-            info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '开始下载，可以到下载窗口查看进度，o(￣▽￣)ｄ', self,
-                         InfoBarPosition.TOP_RIGHT)
+            show_tip(InfoBarIcon.INFORMATION, '温馨提示', '开始下载，可以到下载窗口查看进度，o(￣▽￣)ｄ', self,
+                     InfoBarPosition.TOP_RIGHT)
         elif status == 'error':
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', '下载失败，(。・＿・。)ﾉI’m sorry~', self,
-                         InfoBarPosition.TOP_RIGHT)
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '下载失败，(。・＿・。)ﾉI’m sorry~', self,
+                     InfoBarPosition.TOP_RIGHT)

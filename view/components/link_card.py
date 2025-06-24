@@ -16,7 +16,7 @@ class LinkCard(QFrame):
         self.iconWidget = IconWidget(icon, self)
         self.titleLabel = QLabel(title, self)
         self.contentLabel = QLabel(TextWrap.wrap(content, 28, False)[0], self)
-        #self.urlWidget = IconWidget(FluentIcon.DOWNLOAD, self)
+        # self.urlWidget = IconWidget(FluentIcon.DOWNLOAD, self)
 
         self.__initWidget()
 
@@ -34,8 +34,8 @@ class LinkCard(QFrame):
         self.vBoxLayout.addSpacing(8)
         self.vBoxLayout.addWidget(self.contentLabel)
         self.vBoxLayout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        #self.urlWidget.setFixedSize(16, 16)
-        #self.urlWidget.move(170, 230)
+        # self.urlWidget.setFixedSize(16, 16)
+        # self.urlWidget.move(170, 230)
 
         self.titleLabel.setObjectName('titleLabel')
         self.contentLabel.setObjectName('contentLabel')

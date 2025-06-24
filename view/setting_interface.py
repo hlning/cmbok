@@ -13,12 +13,19 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingC
                             ComboBoxSettingCard, ExpandLayout, CustomColorSettingCard,
                             setTheme, setThemeColor, RangeSettingCard)
 
+<<<<<<< HEAD
+from common.config import cfg, HELP_URL, GITHUBURL, QQ_URL
+=======
 from common.config import cfg, HELP_URL, QQ_URL, GITHUBURL
+>>>>>>> origin/main
 from common.style_sheet import StyleSheet
-from common.util import check_url
-from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import CMBOK_WEBSITE
+<<<<<<< HEAD
+from utils.base_utils import check_url
+from view.components.info_bar_tip import show_tip
+=======
+>>>>>>> origin/main
 
 
 class SettingInterface(ScrollArea):
@@ -26,6 +33,8 @@ class SettingInterface(ScrollArea):
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
+        self.setObjectName('SettingInterface')
+
         self.scrollWidget = QWidget()
         self.expandLayout = ExpandLayout(self.scrollWidget)
 
@@ -53,9 +62,23 @@ class SettingInterface(ScrollArea):
             self.useSettingGroup
         )
 
+<<<<<<< HEAD
+        self.windowWidthCard = RangeSettingCard(
+            cfg.windowWidth,
+            MyFluentIcon.WIDTH,
+            '窗口宽度',
+            '已经把宽度不能调节放开，可以在这里配置适合的宽度',
+            self.useSettingGroup
+        )
+
+        self.windowHeightCard = RangeSettingCard(
+            cfg.windowHeight,
+            MyFluentIcon.HEIGHT,
+=======
         self.windowHeightCard = RangeSettingCard(
             cfg.windowHeight,
             FIF.IOT,
+>>>>>>> origin/main
             '窗口高度',
             '已经把高度不能调节放开，可以在这里配置适合的高度',
             self.useSettingGroup
@@ -67,6 +90,34 @@ class SettingInterface(ScrollArea):
             '下载目录',
             cfg.get(cfg.downloadFolder),
             self.useSettingGroup
+        )
+
+        self.toolSaveFolderCard = PushSettingCard(
+            '选择文件夹',
+            FIF.SAVE,
+            '工具箱文件保存目录',
+            cfg.get(cfg.toolSaveFolder),
+            self.useSettingGroup
+        )
+
+        # Komga设置
+        self.komgaSettingGroup = SettingCardGroup(
+            'Komga设置（Komga是一款开源阅读器）', self.scrollWidget)
+
+        self.isRunKomgaCard = SwitchSettingCard(
+            FIF.FOLDER,
+            '软件启动时是否运行komga',
+            '如果开启，软件启动时会自动运行komga',
+            configItem=cfg.isRunKomga,
+            parent=self.komgaSettingGroup
+        )
+
+        self.komgaBackgrounderCard = SwitchSettingCard(
+            FIF.FOLDER,
+            'Komga是否保留后台',
+            '如果开启，软件退出后komga依旧会运行',
+            configItem=cfg.komgaBackgrounder,
+            parent=self.komgaSettingGroup
         )
 
         # 漫画设置
@@ -232,7 +283,11 @@ class SettingInterface(ScrollArea):
             '检查更新',
             FIF.INFO,
             '关于',
+<<<<<<< HEAD
+            f"这是我自从买了一台Kindle之后，开发的下载、阅读漫画和图书的软件，且用且珍惜，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @2025 zhiyiYo",
+=======
             f"这是我自从买了一台Kindle之后，做来下载漫画和图书用的，目前还在完善中，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @2025 zhiyiYo",
+>>>>>>> origin/main
             self.aboutGroup
         )
         self.aboutCard.clicked.connect(self.aboubt)
@@ -249,7 +304,11 @@ class SettingInterface(ScrollArea):
                     results = response.json()
                     version = results['version']
                     if version is not None and version['no'] == cfg.get(cfg.version):
+<<<<<<< HEAD
+                        show_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
+=======
                         info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
+>>>>>>> origin/main
                     else:
                         if version is not None and version != '':
                             w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
@@ -259,7 +318,11 @@ class SettingInterface(ScrollArea):
                             else:
                                 logging.info('取消')
                         else:
+<<<<<<< HEAD
+                            show_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
+=======
                             info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
+>>>>>>> origin/main
             else:
                 self.get_notification()
         except Exception:
@@ -291,11 +354,21 @@ class SettingInterface(ScrollArea):
         # self.useSettingGroup.addSettingCard(self.useLocalServerCard)
         # 下载最大线程
         self.useSettingGroup.addSettingCard(self.downloadThreadNumCard)
+<<<<<<< HEAD
+        # 窗口宽度
+        self.useSettingGroup.addSettingCard(self.windowWidthCard)
+=======
+>>>>>>> origin/main
         # 窗口高度
         self.useSettingGroup.addSettingCard(self.windowHeightCard)
         # 下载目录
         self.useSettingGroup.addSettingCard(self.downloadFolderCard)
-
+        # 工具箱文件保存目录
+        self.useSettingGroup.addSettingCard(self.toolSaveFolderCard)
+        # cmbok启动是否运行komga
+        self.komgaSettingGroup.addSettingCard(self.isRunKomgaCard)
+        # Komga是否保留后台
+        self.komgaSettingGroup.addSettingCard(self.komgaBackgrounderCard)
         # epub是否保存到漫画根目录
         self.comicSettingGroup.addSettingCard(self.epubSaveFolderCard)
         # 是否删除章节图片
@@ -328,6 +401,7 @@ class SettingInterface(ScrollArea):
         self.expandLayout.setSpacing(28)
         self.expandLayout.setContentsMargins(36, 10, 36, 0)
         self.expandLayout.addWidget(self.useSettingGroup)
+        self.expandLayout.addWidget(self.komgaSettingGroup)
         self.expandLayout.addWidget(self.comicSettingGroup)
         self.expandLayout.addWidget(self.websiteSettingGroup)
         self.expandLayout.addWidget(self.personalGroup)
@@ -343,14 +417,18 @@ class SettingInterface(ScrollArea):
             parent=self
         )
 
-    def __onDownloadFolderCardClicked(self):
+    def __onDownloadFolderCardClicked(self, type):
         folder = QFileDialog.getExistingDirectory(
             self, '选择m目录', cfg.get(cfg.downloadFolder))
         if not folder or cfg.get(cfg.downloadFolder) == folder:
             return
 
-        cfg.set(cfg.downloadFolder, folder)
-        self.downloadFolderCard.setContent(folder)
+        if type == 1:
+            cfg.set(cfg.downloadFolder, folder)
+            self.downloadFolderCard.setContent(folder)
+        elif type == 2:
+            cfg.set(cfg.toolSaveFolder, folder)
+            self.toolSaveFolder.setContent(folder)
 
     def __onCalibrePathCardClicked(self):
         options = QFileDialog.Options()
@@ -370,7 +448,10 @@ class SettingInterface(ScrollArea):
         cfg.appRestartSig.connect(self.__showRestartTooltip)
 
         self.downloadFolderCard.clicked.connect(
-            self.__onDownloadFolderCardClicked)
+            lambda: self.__onDownloadFolderCardClicked(1))
+
+        self.toolSaveFolderCard.clicked.connect(
+            lambda: self.__onDownloadFolderCardClicked(2))
 
         # ebook-convert.exe路径选择监听
         self.calibrePathCard.clicked.connect(

@@ -38,8 +38,29 @@ class Config(QConfig):
     downloadFolder = ConfigItem(
         "Folders", "DownloadFolder", "app/download", FolderValidator())
 
+<<<<<<< HEAD
+    # 工具箱文件保存目录
+    toolSaveFolder = ConfigItem(
+        "Folders", "ToolSaveFolder", "app/download/convert", FolderValidator())
+
+    # 窗口宽度
+    windowWidth = RangeConfigItem("Width", "WindowWidth", 965, RangeValidator(900, 1080))
+
+    # 窗口高度
+    windowHeight = RangeConfigItem("Height", "WindowHeight", 750, RangeValidator(450, 950))
+
+    # komga是否随cmbok启动运行
+    isRunKomga = ConfigItem("Komga", "IsRunKomga", True, BoolValidator())
+
+    komgaFolder = ConfigItem(
+        "Komga", "komgaFolder", "komga", FolderValidator())
+
+    # komga是否保留后台
+    komgaBackgrounder = ConfigItem("Komga", "KomgaBackgrounder", False, BoolValidator())
+=======
     # 窗口高度
     windowHeight = RangeConfigItem("Height", "WindowHeight", 550, RangeValidator(450, 900))
+>>>>>>> origin/main
 
     # epub是否保存到漫画根目录
     epubSaveFolder = ConfigItem("Folders", "EpubSaveFolder", True, BoolValidator())
@@ -79,9 +100,14 @@ class Config(QConfig):
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
+<<<<<<< HEAD
+    version = ConfigItem("Update", "Version", 'V1.0.5')
+=======
     version = ConfigItem("Update", "Version", 'V1.0.3')
 
+>>>>>>> origin/main
 
+VERSION_NO = 'V1.0.5'
 YEAR = 2025
 AUTHOR = "甜甜的王甜甜"
 HELP_URL = "https://support.qq.com/products/656074"

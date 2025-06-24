@@ -3,8 +3,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
 from qfluentwidgets import IconWidget, TextWrap, FlowLayout, CardWidget
 
-from common.signal_bus import signalBus
-from common.style_sheet import StyleSheet
+from ...common import StyleSheet, signalBus
 
 
 class SampleCard(CardWidget):

@@ -20,6 +20,19 @@
         <file>images/koodoreader_white.svg</file>
         <file>images/website_black.svg</file>
         <file>images/website_white.svg</file>
+<<<<<<< HEAD
+        <file>images/file_manager_black.svg</file>
+        <file>images/file_manager_white.svg</file>
+        <file>images/width_black.svg</file>
+        <file>images/width_white.svg</file>
+        <file>images/height_black.svg</file>
+        <file>images/height_white.svg</file>
+        <file>images/tool_black.svg</file>
+        <file>images/tool_white.svg</file>
+        <file>images/komga_white.svg</file>
+        <file>images/komga_black.svg</file>
+=======
+>>>>>>> origin/main
 
         <file>images/header.jpeg</file>
         <file>images/header.png</file>
@@ -27,6 +40,14 @@
         <file>images/comic_cover.png</file>
         <file>images/book_cover.png</file>
         <file>images/loading.gif</file>
+<<<<<<< HEAD
+        <file>images/folder.png</file>
+        <file>images/to_pdf.png</file>
+        <file>images/merge_pdf.png</file>
+        <file>images/to_epub.png</file>
+        <file>images/to_doc.png</file>
+=======
+>>>>>>> origin/main
 
         <file>images/wx.png</file>
 

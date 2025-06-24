@@ -5,7 +5,6 @@ from qfluentwidgets import FluentIconBase, getIconColor, Theme
 
 
 class Icon(FluentIconBase, Enum):
-
     GRID = "Grid"
     MENU = "Menu"
     TEXT = "Text"

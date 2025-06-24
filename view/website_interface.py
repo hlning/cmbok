@@ -7,7 +7,10 @@ import traceback
 import uuid
 from functools import partial
 
+<<<<<<< HEAD
+=======
 import requests
+>>>>>>> origin/main
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
 from PyQt5.QtGui import QPixmap, QMovie, QCursor, QIcon, QColor
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
@@ -22,11 +25,19 @@ from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, FlowLayout, Search
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
+<<<<<<< HEAD
+from custom.my_fluent_icon import MyFluentIcon
+from service.cmbok_service import ComicWebsiteChapterImages, EpubThread
+from utils.base_utils import truncate_string, get_current_time, get_directories
+from utils.utils_files_and_folders import del_folder, move_files
+from view.components.info_bar_tip import show_tip
+=======
 from common.util import truncate_string, check_url, del_folder, \
     get_directories, move_files, get_current_time
 from common.view_util import info_bar_tip
 from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import CMBOK_WEBSITE, ComicWebsiteChapterImages, EpubThread
+>>>>>>> origin/main
 
 
 class WebsiteInterface(QWidget):
@@ -34,7 +45,10 @@ class WebsiteInterface(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setObjectName('WebsiteInterface')
+<<<<<<< HEAD
+=======
         self.resize(400, 400)
+>>>>>>> origin/main
 
         self.pivot = SegmentedToolWidget(self)
         self.stackedWidget = QStackedWidget(self)
@@ -211,8 +225,12 @@ class WebsiteCard(CardWidget):
         self.load_image(icon)
 
         self.titleLabel = BodyLabel(truncate_string(name, 15), self)
+<<<<<<< HEAD
+        self.titleLabel.setToolTip(name)
+=======
         if len(name) > 15:
             self.titleLabel.setToolTip(name)
+>>>>>>> origin/main
 
         self.hBoxLayout = QHBoxLayout(self)
         self.setFixedWidth(260)
@@ -407,7 +425,11 @@ class Browser(QMainWindow):
 
     def handle_results(self, result):
         if result is not None and len(result['chapters']) == 0:
+<<<<<<< HEAD
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '没有找到章节信息，o(╥﹏╥)o', self,
+=======
             info_bar_tip(InfoBarIcon.WARNING, '温馨提示', '没有找到章节信息，o(╥﹏╥)o', self,
+>>>>>>> origin/main
                          InfoBarPosition.TOP)
         else:
             Flyout.make(CustomFlyoutView(result, self), self.chapter_button, self, aniType=FlyoutAnimationType.PULL_UP)
