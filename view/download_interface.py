@@ -6,21 +6,16 @@ import traceback
 
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices
-<<<<<<< HEAD
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem
-=======
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QSizePolicy, \
-    QStyle
->>>>>>> origin/main
 from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
-    PipsPager, PipsScrollButtonDisplayMode, TableWidget, \
-    RoundMenu, Action, ProgressRing
+    TableWidget, RoundMenu, Action, ProgressRing
 
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
 from view.components.info_bar_tip import show_tip
+from view.components.pagination_bar import PaginationBar
 
 
 # 定义全局信号槽类
@@ -102,17 +97,10 @@ class DownloadInterface(QWidget):
             show_tip(InfoBarIcon.ERROR, '温馨提示', f"{name}-{chapter_name}下载失败，(꒦_꒦)", self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'no_account':
-<<<<<<< HEAD
             show_tip(InfoBarIcon.ERROR, '温馨提示', f"今日已无法下载，明天再来吧(*^▽^*)", self,
                          InfoBarPosition.TOP_RIGHT)
         elif status == 'no_num':
             show_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
-=======
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"今日已无法下载，明天再来吧(*^▽^*)", self,
-                         InfoBarPosition.TOP_RIGHT)
-        elif status == 'no_num':
-            info_bar_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
->>>>>>> origin/main
                          InfoBarPosition.TOP_RIGHT)
 
         self.updateComicRecords(type)
@@ -189,21 +177,22 @@ class DownloadWidget(QWidget):
         self.tableWidget.setColumnHidden(0, True)
         # 设置水平表头并隐藏垂直表头
         self.tableWidget.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # 最后一列拉伸填充，避免右侧空白
+        self.tableWidget.horizontalHeader().setStretchLastSection(True)
         # 使用样式表调整表头的样式
         self.tableWidget.horizontalHeader().setStyleSheet("QHeaderView::section { padding-left: 20px; }")
         self.reset_bookview_size()
         # 查询下载记录
         self.vBoxLayout.addWidget(self.tableWidget)
-        # 分页器
-        self.pager = PipsPager(Qt.Horizontal)
-        # 设置当前页码
-        self.pager.setCurrentIndex(0)
+        # 分页栏
+        self._pageSize = 10
+        self._searchText = None
+        self._total = 0
+        self._pageCount = 1
+        self.pager = PaginationBar([10, 20, 30], self)
+        self.pager.pageChanged.connect(self.getRecords)
+        self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
         self.setPage(None)
-        # 始终显示前进和后退按钮
-        self.pager.setNextButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        self.pager.setPreviousButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        # 页码切换
-        self.pager.currentIndexChanged.connect(lambda index: self.getRecords(self.lineEdit.text(), index))
 
         self.vBoxLayout.addStretch(1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter)
@@ -315,25 +304,25 @@ class DownloadWidget(QWidget):
         else:
             show_tip(InfoBarIcon.ERROR, '温馨提示', '目录不存在', self)
 
-    # 表格每列宽度
+    # 表格每列宽度（按比例铺满，最后一列拉伸填充）
     def reset_bookview_size(self):
-        width = self.tableWidget.size().width()
-        self.tableWidget.setColumnWidth(0, int(width))
+        width = self.tableWidget.width()
+        if width <= 0:
+            return
         if self.type == 1:
-            self.tableWidget.setColumnWidth(1, int(width * 1.3))
-            self.tableWidget.setColumnWidth(2, int(width * 1))
-            self.tableWidget.setColumnWidth(3, int(width * 0.8))
-            self.tableWidget.setColumnWidth(4, int(width * 0.9))
-            self.tableWidget.setColumnWidth(5, int(width * 0.6))
-            self.tableWidget.setColumnWidth(6, int(width * 1.6))
-            self.tableWidget.setColumnWidth(7, int(width * 1.6))
+            # 列1-7: 漫画名称/作者/章节/状态/进度/开始/完成
+            weights = [1.3, 1.0, 0.8, 0.9, 0.6, 1.6, 1.6]
         else:
-            self.tableWidget.setColumnWidth(1, int(width * 1.7))
-            self.tableWidget.setColumnWidth(2, int(width * 1.4))
-            self.tableWidget.setColumnWidth(3, int(width * 0.9))
-            self.tableWidget.setColumnWidth(4, int(width * 0.6))
-            self.tableWidget.setColumnWidth(5, int(width * 1.6))
-            self.tableWidget.setColumnWidth(6, int(width * 1.6))
+            # 列1-6: 图书名称/作者/状态/进度/开始/完成
+            weights = [1.7, 1.4, 0.9, 0.6, 1.6, 1.6]
+        total = sum(weights)
+        # 最后一列由 setStretchLastSection 自动拉伸，其余按比例
+        for i in range(len(weights) - 1):
+            self.tableWidget.setColumnWidth(i + 1, int(width * weights[i] / total))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.reset_bookview_size()
 
     # 回车搜索
     def enter(self):
@@ -348,46 +337,39 @@ class DownloadWidget(QWidget):
     def search(self, text):
         self.setPage(text)
 
-    # 设置页码
+    # 设置页码（搜索/切每页条数时重算总数与页数，并加载第1页）
     def setPage(self, text):
+        self._searchText = text
         sqlite_util = SQLiteDatabase()
         try:
-            # 查询总数更新分页器
             count = sqlite_util.count_data('cmbok_download_history',
                                            conditions={'name': f'%{text}%', 'type': self.type})
-            pageNumber = math.ceil(count / 16)
-            # 更新表格显示行数
-            if count > 0 and count <= 16:
-                self.tableWidget.setRowCount(count)
-            elif count > 16:
-                self.tableWidget.setRowCount(16)
-            else:
-                self.tableWidget.setRowCount(0)
-            # 设置当前页码
-            if pageNumber == 0:
-                self.pager.setCurrentIndex(0)
-            # 设置页数
-            self.pager.setPageNumber(pageNumber)
-            # 设置圆点数量
-            self.pager.setVisibleNumber(10 if pageNumber > 10 else pageNumber)
+            self._total = count
+            self._pageCount = max(1, math.ceil(count / self._pageSize))
+            self.pager.setPage(0, self._pageCount, count)
+            # 无数据时隐藏分页组件，有数据才显示
+            self.pager.setVisible(self._total > 0)
         except Exception:
             logging.info(traceback.format_exc())
-            logging.info('查询漫画下载记录异常')
+            logging.info('查询下载记录异常')
         finally:
             sqlite_util.close()
+        self.getRecords(0)
 
     # 获取下载记录
-    def getRecords(self, text, index):
+    def getRecords(self, index):
+        self._currentPage = index
         sqlite_util = SQLiteDatabase()
         try:
             # 清空表格内容
             self.tableWidget.clearContents()
             # 查询下载记录
             historys = sqlite_util.query_data('cmbok_download_history',
-                                              conditions={'name': f'%{text}%', 'type': self.type},
+                                              conditions={'name': f'%{self._searchText}%', 'type': self.type},
                                               order_by='status ASC,start_time DESC,name ASC,chapter_name DESC',
-                                              limit=16,
-                                              offset=index * 16)
+                                              limit=self._pageSize,
+                                              offset=index * self._pageSize)
+            self.tableWidget.setRowCount(len(historys))
 
             # 添加表格数据
             for i, history in enumerate(historys):
@@ -423,12 +405,17 @@ class DownloadWidget(QWidget):
                     self.tableWidget.setCellWidget(i, 4, ring_widget)
                     self.tableWidget.setItem(i, 5, QTableWidgetItem(history.start_time))
                     self.tableWidget.setItem(i, 6, QTableWidgetItem(history.finish_time))
-
+            self.pager.setPage(index, self._pageCount, self._total)
         except Exception:
             logging.info(traceback.format_exc())
             logging.info('查询下载记录异常')
         finally:
             sqlite_util.close()
+
+    # 每页条数变化
+    def _onPageSizeChanged(self, size):
+        self._pageSize = size
+        self.setPage(self._searchText)
 
     def createRing(self, process):
         # 创建按钮

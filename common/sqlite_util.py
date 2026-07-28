@@ -3,14 +3,6 @@ import os
 import sqlite3
 import traceback
 
-import requests
-
-<<<<<<< HEAD
-from utils.base_utils import check_url
-=======
-from common.util import check_url
->>>>>>> origin/main
-
 
 class Row:
     """表示一行查询结果，允许通过属性访问"""
@@ -59,109 +51,58 @@ class SQLiteDatabase:
         # start_time 开始时间
         # finish_time 完成时间
 
-        flag = self.check_table_exists('cmbok_download_history')
-        if not flag:
-            self.create_table('cmbok_download_history',
-                              {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
-                               'author': 'TEXT', 'key': 'TEXT', 'chapter_name': 'TEXT',
-                               'chapter_path_word': 'TEXT', 'book_hash': 'TEXT', 'type': 'INTEGER',
-                               'status': 'INTEGER', 'process': 'INTEGER', 'start_time': 'TEXT', 'finish_time': 'TEXT'})
-
-        # 创建漫画/图书收藏记录表
-        # cover 漫画/图书封面
-        # name 漫画/图书名称
-        # author 漫画/图书作者
-        # key 漫画/图书唯一key，漫画path_word，图书：book_id
-        # book_hash 图书：book_hash，用于在收藏页下载
-        # book_extension 图书文件类型
-        # type 类型。1：漫画 2：图书
-        # collection_time 收藏时间
-<<<<<<< HEAD
-        # folder_id 文件夹id
-=======
->>>>>>> origin/main
-        flag = self.check_table_exists('cmbok_collection_record')
-        if not flag:
-            self.create_table('cmbok_collection_record',
-                              {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
-                               'author': 'TEXT', 'key': 'TEXT', 'book_hash': 'TEXT', 'book_extension': 'TEXT',
-<<<<<<< HEAD
-                               'type': 'INTEGER', 'collection_time': 'TEXT', 'folder_id': 'INTEGER'})
+        # 先检测 cmbok.db 是否已存在：已存在则做表结构同步与数据迁移；不存在则新建库
+        if self.db_exists:
+            logging.info('[DB] 检测到已有 cmbok.db，执行表结构同步与数据迁移')
         else:
-            # 检查folder_id字段是否存在
-            is_exists = self.column_exists('cmbok_collection_record', 'folder_id')
-            if not is_exists:
-                # 更新cmbok_collection_record表结构
-                self.cursor.execute('ALTER TABLE cmbok_collection_record ADD COLUMN folder_id INTEGER')
+            logging.info('[DB] 未检测到 cmbok.db，新建数据库并初始化默认数据')
 
-        # 收藏文件夹
-        # name 文件夹名称
-        # icon 图标
-        # type 类型。1：漫画 2：图书
-        # parent_id 父文件夹
-        # add_time 添加时间
-        flag = self.check_table_exists('comic_collection_folder')
-        if not flag:
-            self.create_table('comic_collection_folder',
-                              {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
-                               'type': 'INTEGER', 'parent_id': 'INTEGER', 'add_time': 'TEXT'})
+        # ===== 表结构同步：不存在则按最新结构建表；存在则补齐缺失列（ensure_table 对新建/已有库均幂等）=====
 
-            # 更新文件夹id
+        # 漫画/图书下载记录表
+        self.ensure_table('cmbok_download_history',
+                          {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
+                           'author': 'TEXT', 'key': 'TEXT', 'chapter_name': 'TEXT',
+                           'chapter_path_word': 'TEXT', 'book_hash': 'TEXT', 'type': 'INTEGER',
+                           'status': 'INTEGER', 'process': 'INTEGER', 'start_time': 'TEXT', 'finish_time': 'TEXT'})
+
+        # 漫画/图书收藏记录表
+        self.ensure_table('cmbok_collection_record',
+                          {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
+                           'author': 'TEXT', 'key': 'TEXT', 'book_hash': 'TEXT', 'book_extension': 'TEXT',
+                           'type': 'INTEGER', 'collection_time': 'TEXT', 'folder_id': 'INTEGER'})
+
+        # 收藏文件夹表
+        folder_table_new = self.ensure_table('comic_collection_folder',
+                                             {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
+                                              'type': 'INTEGER', 'parent_id': 'INTEGER', 'add_time': 'TEXT'})
+        if folder_table_new:
+            # 首次创建文件夹表：把已有收藏记录的 folder_id 置 0（根目录）
             self.update_data('cmbok_collection_record', {'folder_id': 0})
-=======
-                               'type': 'INTEGER', 'collection_time': 'TEXT'})
->>>>>>> origin/main
 
-        # 创建站点下载记录表
-        # comic_name 漫画/图书名称
-        # chapter_num 章节数量
-        # downloaded_num 已下载数量
-        # downloading_num 正在下载数量
-        # is_update 是否在更新
-        # start_time 开始时间
-        # end_time 结束时间
-        flag = self.check_table_exists('website_download_record')
-        if not flag:
-            self.create_table('website_download_record',
-                              {'id': 'INTEGER PRIMARY KEY', 'comic_name': 'TEXT', 'chapter_num': 'INTEGER',
-                               'downloaded_num': 'INTEGER', 'downloading_num': 'INTEGER', 'is_update': 'INTEGER',
-                               'start_time': 'TEXT', 'end_time': 'TEXT'})
+        # 站点下载记录表
+        self.ensure_table('website_download_record',
+                          {'id': 'INTEGER PRIMARY KEY', 'comic_name': 'TEXT', 'chapter_num': 'INTEGER',
+                           'downloaded_num': 'INTEGER', 'downloading_num': 'INTEGER', 'is_update': 'INTEGER',
+                           'start_time': 'TEXT', 'end_time': 'TEXT'})
 
-        flag = self.check_table_exists('comic_website')
-        if not flag:
-            self.create_table('comic_website',
-                              {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
-                               'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
-                               'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
-                               'img_dom': 'TEXT'})
-<<<<<<< HEAD
+        # 漫画站点配置表
+        self.ensure_table('comic_website',
+                          {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
+                           'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
+                           'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
+                           'img_dom': 'TEXT', 'use_frame': 'INTEGER', 'img_attr': 'TEXT', 'img_script': 'TEXT'})
 
-=======
->>>>>>> origin/main
-        # 同步站点数据
-        self.delete_all_data('comic_website')
-        try:
-            from service.cmbok_service import CMBOK_WEBSITE
-            url = f'{CMBOK_WEBSITE}cmbok/comic_website/allwebsites'
-            if check_url(url):
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()
-                if response.status_code == 200:
-                    results = response.json()
-                    for website in results['websites']:
-                        self.insert_data('comic_website', {
-                            'name': website['name'],
-                            'icon': website['icon'],
-                            'url': website['url'],
-                            'comic_cover_dom': website['comic_cover_dom'],
-                            'comic_name_dom': website['comic_name_dom'],
-                            'comic_author_dom': website['comic_author_dom'],
-                            'chapter_name_dom': website['chapter_name_dom'],
-                            'chapter_link_dom': website['chapter_link_dom'],
-                            'img_dom': website['img_dom']
-                        })
-        except Exception:
-            print(traceback.format_exc())
+        # ===== 数据迁移：重置 comic_website 为默认站点（每次 init 清空并重建，保证配置为最新默认值）=====
+        self._reseed_comic_website()
+
+        # 清理无用遗留表（旧版本残留，代码已不再使用）
+        self.cursor.execute('DROP TABLE IF EXISTS comic_mangacopy_history')
+        self.cursor.execute('DROP TABLE IF EXISTS cmbok_z_library_account')
+        self.cursor.execute('DROP TABLE IF EXISTS cmbok_builtin_download_count')
+        self.connection.commit()
+
+        # comic_website 站点配置改为纯本地 sqlite 维护（不再从后台同步）
 
         self.close()
 
@@ -174,7 +115,38 @@ class SQLiteDatabase:
             return True
         else:
             return False
-<<<<<<< HEAD
+
+    def _reseed_comic_website(self):
+        """每次 db init 清空 comic_website 并重置为默认站点列表。"""
+        # 默认站点（参考油猴脚本 getImgs 配置；use_frame=1 走独立取图窗口，img_script 为取图JS片段）
+        default_sites = [
+            {'name': '来漫画', 'icon': 'https://www.comemh8.com/template/skin4_20110501/images/logo.png',
+             'url': 'https://www.comemh8.com/', 'comic_cover_dom': '.info_cover .cover img',
+             'comic_name_dom': '.intro_l .title h1', 'comic_author_dom': '',
+             'chapter_name_dom': '.plist.pnormal ul li a', 'chapter_link_dom': '.plist.pnormal ul a',
+             'img_dom': '.img-box.J_shareContent img', 'use_frame': 1, 'img_attr': '',
+             'img_script': 'var w = ifr.contentWindow; var h = w.gethost(); return w.getUrlpics().map(function(e){ return h + e; });'},
+            {'name': '再漫画', 'icon': 'https://manhua.zaimanhua.com/_nuxt/zmh-logo.d5f02b77.png',
+             'url': 'https://manhua.zaimanhua.com/', 'comic_cover_dom': '',
+             'comic_name_dom': '.wrap_intro_l_comic h1 a', 'comic_author_dom': '',
+             'chapter_name_dom': '.tab-content-selected a', 'chapter_link_dom': '.tab-content-selected a',
+             'img_dom': '', 'use_frame': 0, 'img_attr': '', 'img_script': ''},
+            {'name': '咚漫', 'icon': 'https://cdn-static.dongmanmanhua.cn/image/pc/newLogo/home_papge_logo_120.png',
+             'url': 'https://www.dongmanmanhua.cn/', 'comic_cover_dom': '',
+             'comic_name_dom': 'h1.subj', 'comic_author_dom': '',
+             'chapter_name_dom': '#_listUl .subj span', 'chapter_link_dom': '#_listUl a',
+             'img_dom': '#_imageList img', 'use_frame': 0, 'img_attr': 'data-url', 'img_script': ''},
+            {'name': 'MYCOMIC', 'icon': '', 'url': 'https://mycomic.com/cn', 'comic_cover_dom': '',
+             'comic_name_dom': '.truncate.whitespace-nowrap', 'comic_author_dom': '',
+             'chapter_name_dom': '.mt-8.mb-12 a', 'chapter_link_dom': '.mt-8.mb-12 a',
+             'img_dom': '.-mx-6 img', 'use_frame': 1, 'img_attr': '', 'img_script': ''},
+        ]
+        try:
+            self.delete_all_data('comic_website')
+            for site in default_sites:
+                self.insert_data('comic_website', site)
+        except Exception:
+            logging.info('重置 comic_website 失败: ' + traceback.format_exc())
 
     def column_exists(self, table_name, column_name):
         # 执行 PRAGMA table_info 查询以获取表的字段信息
@@ -187,8 +159,6 @@ class SQLiteDatabase:
                 return True
 
         return False
-=======
->>>>>>> origin/main
 
     def create_table(self, table_name, columns):
         """创建表"""
@@ -196,6 +166,21 @@ class SQLiteDatabase:
         sql = f"CREATE TABLE IF NOT EXISTS {table_name} ({columns_with_types});"
         self.cursor.execute(sql)
         self.connection.commit()
+
+    def ensure_table(self, table_name, columns):
+        """确保表结构为最新：表不存在则按 columns 建表；表存在则逐列检查，缺失则 ALTER ADD COLUMN 补齐。
+        返回 True 表示本次为新建表，False 表示已存在（可能做了列迁移）。"""
+        if not self.check_table_exists(table_name):
+            self.create_table(table_name, columns)
+            return True
+        # 表已存在：补齐所有缺失列，使旧库结构与最新建表语句一致
+        for col, col_type in columns.items():
+            if col == 'id':
+                continue  # 主键列已存在，不可 ALTER 添加
+            if not self.column_exists(table_name, col):
+                self.cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {col} {col_type}')
+        self.connection.commit()
+        return False
 
     def insert_data(self, table_name, data):
         """插入数据"""

@@ -4,28 +4,20 @@ import traceback
 
 import requests
 from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
-from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog
-from qfluentwidgets import FluentIcon as FIF, InfoBarIcon, MessageBox, SettingCard
+from PyQt5.QtGui import QDesktopServices, QPixmap
+from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog, QDialog, QVBoxLayout
+from qfluentwidgets import FluentIcon as FIF, InfoBarIcon, InfoBarPosition, MessageBox
 from qfluentwidgets import InfoBar
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
                             ComboBoxSettingCard, ExpandLayout, CustomColorSettingCard,
                             setTheme, setThemeColor, RangeSettingCard)
 
-<<<<<<< HEAD
-from common.config import cfg, HELP_URL, GITHUBURL, QQ_URL
-=======
-from common.config import cfg, HELP_URL, QQ_URL, GITHUBURL
->>>>>>> origin/main
+from common.config import cfg, GITHUBURL, QQ_URL, GITHUB_RELEASE_API
+from common.signal_bus import signalBus
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
-from service.cmbok_service import CMBOK_WEBSITE
-<<<<<<< HEAD
-from utils.base_utils import check_url
 from view.components.info_bar_tip import show_tip
-=======
->>>>>>> origin/main
 
 
 class SettingInterface(ScrollArea):
@@ -62,7 +54,6 @@ class SettingInterface(ScrollArea):
             self.useSettingGroup
         )
 
-<<<<<<< HEAD
         self.windowWidthCard = RangeSettingCard(
             cfg.windowWidth,
             MyFluentIcon.WIDTH,
@@ -74,11 +65,6 @@ class SettingInterface(ScrollArea):
         self.windowHeightCard = RangeSettingCard(
             cfg.windowHeight,
             MyFluentIcon.HEIGHT,
-=======
-        self.windowHeightCard = RangeSettingCard(
-            cfg.windowHeight,
-            FIF.IOT,
->>>>>>> origin/main
             '窗口高度',
             '已经把高度不能调节放开，可以在这里配置适合的高度',
             self.useSettingGroup
@@ -201,6 +187,15 @@ class SettingInterface(ScrollArea):
             self.websiteSettingGroup
         )
 
+        # 图书设置
+        self.bookSettingGroup = SettingCardGroup('图书设置', self.scrollWidget)
+        self.useBuiltinAccountCard = SwitchSettingCard(
+            MyFluentIcon.BOOK, '使用内置账号',
+            '开启后图书搜索/下载使用内置账号轮询，每日最多5本，无需登录；关闭则需登录自己的账号',
+            configItem=cfg.use_zlibrary_builtin_account,
+            parent=self.bookSettingGroup
+        )
+
         # 个性化
         self.personalGroup = SettingCardGroup(
             '个性化', self.scrollWidget)
@@ -222,6 +217,20 @@ class SettingInterface(ScrollArea):
             '主题色',
             '选择你的应用主题色',
             self.personalGroup
+        )
+        self.micaCard = SwitchSettingCard(
+            FIF.TRANSPARENT,
+            '毛玻璃效果',
+            '开启后窗口启用云母（Mica）半透明效果，关闭可提升部分电脑流畅度（仅 Windows 11 生效）',
+            configItem=cfg.micaEnabled,
+            parent=self.personalGroup
+        )
+        self.navigationExpandedCard = SwitchSettingCard(
+            FIF.MENU,
+            '导航默认展开',
+            '开启后启动时导航栏默认展开显示；关闭则折叠为图标模式',
+            configItem=cfg.navigationExpanded,
+            parent=self.personalGroup
         )
         self.zoomCard = OptionsSettingCard(
             cfg.dpiScale,
@@ -252,15 +261,6 @@ class SettingInterface(ScrollArea):
 
         # 关于
         self.aboutGroup = SettingCardGroup('关于', self.scrollWidget)
-        self.helpCard = HyperlinkCard(
-            HELP_URL,
-            '前往反馈',
-            FIF.HELP,
-            '反馈',
-            '如果有问题或者建议，可以反馈给我',
-            self.aboutGroup
-        )
-
         self.githubCard = HyperlinkCard(
             GITHUBURL,
             '开源地址',
@@ -270,11 +270,19 @@ class SettingInterface(ScrollArea):
             self.aboutGroup
         )
 
+        self.donateCard = PrimaryPushSettingCard(
+            '支持作者',
+            FIF.HEART,
+            '捐赠支持',
+            '个人开发不易，如果这个软件帮助到了您，可以请作者喝杯奶茶',
+            self.aboutGroup
+        )
+
         self.qqCard = HyperlinkCard(
             QQ_URL,
             '我要加入',
             MyFluentIcon.QQ,
-            'QQ群：927528211',
+            'QQ群：1003773005',
             '欢迎各位喜欢本软件或有兴趣交流的朋友入群一起沟通',
             self.aboutGroup
         )
@@ -283,11 +291,7 @@ class SettingInterface(ScrollArea):
             '检查更新',
             FIF.INFO,
             '关于',
-<<<<<<< HEAD
-            f"这是我自从买了一台Kindle之后，开发的下载、阅读漫画和图书的软件，且用且珍惜，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @2025 zhiyiYo",
-=======
-            f"这是我自从买了一台Kindle之后，做来下载漫画和图书用的，目前还在完善中，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @2025 zhiyiYo",
->>>>>>> origin/main
+            f"这是我自从买了一台Kindle之后，开发的下载、阅读漫画和图书的软件，且用且珍惜，当前版本：{cfg.get(cfg.version)}\nPyQt-Fluent-Widgets @{cfg.get(cfg.year)} zhiyiYo",
             self.aboutGroup
         )
         self.aboutCard.clicked.connect(self.aboubt)
@@ -296,38 +300,23 @@ class SettingInterface(ScrollArea):
 
     def aboubt(self):
         try:
-            url = f'{CMBOK_WEBSITE}/cmbok/version/version'
-            if check_url(url):
-                response = requests.get(url)
-                response.raise_for_status()
-                if response.status_code == 200:
-                    results = response.json()
-                    version = results['version']
-                    if version is not None and version['no'] == cfg.get(cfg.version):
-<<<<<<< HEAD
-                        show_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
-=======
-                        info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
->>>>>>> origin/main
-                    else:
-                        if version is not None and version != '':
-                            w = MessageBox("检测到新版本，是否更新？", version['content'], self.window())
-                            if w.exec():
-                                url = QUrl(version['url'])  # 要打开的链接
-                                QDesktopServices.openUrl(url)
-                            else:
-                                logging.info('取消')
-                        else:
-<<<<<<< HEAD
-                            show_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
-=======
-                            info_bar_tip(InfoBarIcon.INFORMATION, '温馨提示', '没有新版本发布~~', self)
->>>>>>> origin/main
+            response = requests.get(GITHUB_RELEASE_API, timeout=10)
+            if response.status_code == 200:
+                release = response.json()
+                tag = release.get('tag_name', '')
+                if tag and tag != cfg.get(cfg.version):
+                    body = release.get('body') or '发现新版本，是否前往下载？'
+                    html_url = release.get('html_url') or GITHUBURL
+                    w = MessageBox("检测到新版本，是否更新？", body, self.window())
+                    if w.exec():
+                        QDesktopServices.openUrl(QUrl(html_url))
+                else:
+                    show_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
             else:
-                self.get_notification()
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '版本检测失败，请稍后重试', self)
         except Exception:
             logging.info(traceback.format_exc())
-            logging.info('服务器已关闭')
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '版本检测失败，请稍后重试', self)
 
     def __initWidget(self):
         self.resize(1000, 800)
@@ -354,11 +343,8 @@ class SettingInterface(ScrollArea):
         # self.useSettingGroup.addSettingCard(self.useLocalServerCard)
         # 下载最大线程
         self.useSettingGroup.addSettingCard(self.downloadThreadNumCard)
-<<<<<<< HEAD
         # 窗口宽度
         self.useSettingGroup.addSettingCard(self.windowWidthCard)
-=======
->>>>>>> origin/main
         # 窗口高度
         self.useSettingGroup.addSettingCard(self.windowHeightCard)
         # 下载目录
@@ -385,16 +371,20 @@ class SettingInterface(ScrollArea):
         self.websiteSettingGroup.addSettingCard(self.isMergeChapterCard)
         # 站点漫画多少话合并成一个章节
         self.websiteSettingGroup.addSettingCard(self.mergeChapterNumCard)
+        # 图书设置
+        self.bookSettingGroup.addSettingCard(self.useBuiltinAccountCard)
 
         self.personalGroup.addSettingCard(self.themeCard)
         self.personalGroup.addSettingCard(self.themeColorCard)
+        self.personalGroup.addSettingCard(self.micaCard)
+        self.personalGroup.addSettingCard(self.navigationExpandedCard)
         self.personalGroup.addSettingCard(self.zoomCard)
 
         self.updateSoftwareGroup.addSettingCard(self.updateOnStartUpCard)
 
-        self.aboutGroup.addSettingCard(self.helpCard)
-        self.aboutGroup.addSettingCard(self.qqCard)
         self.aboutGroup.addSettingCard(self.githubCard)
+        self.aboutGroup.addSettingCard(self.donateCard)
+        self.aboutGroup.addSettingCard(self.qqCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
 
         # add setting card group to layout
@@ -404,9 +394,13 @@ class SettingInterface(ScrollArea):
         self.expandLayout.addWidget(self.komgaSettingGroup)
         self.expandLayout.addWidget(self.comicSettingGroup)
         self.expandLayout.addWidget(self.websiteSettingGroup)
+        self.expandLayout.addWidget(self.bookSettingGroup)
         self.expandLayout.addWidget(self.personalGroup)
         self.expandLayout.addWidget(self.updateSoftwareGroup)
         self.expandLayout.addWidget(self.aboutGroup)
+
+        # 捐赠按钮宽度与检查更新按钮保持一致
+        self.donateCard.button.setFixedWidth(self.aboutCard.button.sizeHint().width())
 
     def __showRestartTooltip(self):
         """ show restart tooltip """
@@ -460,3 +454,30 @@ class SettingInterface(ScrollArea):
         # personalization
         cfg.themeChanged.connect(setTheme)
         self.themeColorCard.colorChanged.connect(lambda c: setThemeColor(c))
+        # 毛玻璃效果：开关变化时即时应用到主窗口
+        self.micaCard.checkedChanged.connect(signalBus.micaEnableChanged.emit)
+
+        # 捐赠
+        self.donateCard.clicked.connect(self._onDonateClicked)
+
+    def _onDonateClicked(self):
+        w = MessageBox(
+            '我是甜甜🥰',
+            '个人开发不易，如果这个项目帮助到了您，可以考虑请我喝一杯奶茶🍵。您的支持就是作者开发和维护项目的动力🚀',
+            self
+        )
+        w.yesButton.setText('来啦')
+        w.cancelButton.setText('下次一定')
+        if w.exec():
+            # 二维码弹窗居中显示
+            dlg = QDialog(self)
+            dlg.setWindowTitle('微信捐赠')
+            layout = QVBoxLayout(dlg)
+            label = QLabel(dlg)
+            label.setPixmap(QPixmap(':/cmbok/images/wx.png'))
+            layout.addWidget(label)
+            dlg.adjustSize()
+            win = self.window()
+            fg = win.frameGeometry()
+            dlg.move(fg.center() - dlg.rect().center())
+            dlg.exec()

@@ -41,6 +41,8 @@ class TreeFrame(Frame):
 
         self.tree.expandAll()
         self.tree.setHeaderHidden(True)
+        # 默认选中“首页”，避免用户未手动选择时无法确认
+        self.tree.setCurrentItem(home_item)
 
         self.setFixedSize(300, 380)
 

@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout
 from qfluentwidgets import ScrollArea, ElevatedCardWidget, ImageLabel, \
     CaptionLabel, FlowLayout
 
+from view.components.auto_flow_layout import AutoFlowLayout
 from common.style_sheet import StyleSheet
 from view.components.convert_tool_card import ToolMessageBox
 
@@ -27,7 +28,7 @@ class ToolInterface(ScrollArea):
         self.todoc = ToolCard(QImage(':/cmbok/images/to_doc.png'), '转DOC', '支持常见格式转换成DOC')
         self.todoc.clicked.connect(lambda: self.show_box(4))
 
-        self.flowLayout = FlowLayout()
+        self.flowLayout = AutoFlowLayout()
         self.flowLayout.addWidget(self.topdf)
         self.flowLayout.addWidget(self.mergepdf)
         self.flowLayout.addWidget(self.toepub)
@@ -47,6 +48,26 @@ class ToolInterface(ScrollArea):
         self.vBoxLayout.setSpacing(40)
         self.vBoxLayout.addLayout(self.flowLayout)
         self.vBoxLayout.setAlignment(Qt.AlignTop)
+        self._layoutCards()
+
+    # 窗口宽度变化时，卡片每行 5 个、宽度自适应
+    def _layoutCards(self):
+        n = 5
+        lm = self.vBoxLayout.contentsMargins()
+        fm = self.flowLayout.contentsMargins()
+        avail = self.viewport().width() - lm.left() - lm.right() - fm.left() - fm.right()
+        hs = self.flowLayout.horizontalSpacing()
+        hs = hs if hs and hs > 0 else 10
+        card_w = max(int(avail / n) - hs, 100)
+        for i in range(self.flowLayout.count()):
+            item = self.flowLayout.itemAt(i)
+            if item and item.widget():
+                item.widget().setFixedWidth(card_w)
+        self.flowLayout.invalidate()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layoutCards()
 
     def show_box(self, type):
         w = ToolMessageBox(type, self)

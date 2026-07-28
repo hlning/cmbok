@@ -38,7 +38,6 @@ class Config(QConfig):
     downloadFolder = ConfigItem(
         "Folders", "DownloadFolder", "app/download", FolderValidator())
 
-<<<<<<< HEAD
     # 工具箱文件保存目录
     toolSaveFolder = ConfigItem(
         "Folders", "ToolSaveFolder", "app/download/convert", FolderValidator())
@@ -57,10 +56,6 @@ class Config(QConfig):
 
     # komga是否保留后台
     komgaBackgrounder = ConfigItem("Komga", "KomgaBackgrounder", False, BoolValidator())
-=======
-    # 窗口高度
-    windowHeight = RangeConfigItem("Height", "WindowHeight", 550, RangeValidator(450, 900))
->>>>>>> origin/main
 
     # epub是否保存到漫画根目录
     epubSaveFolder = ConfigItem("Folders", "EpubSaveFolder", True, BoolValidator())
@@ -97,22 +92,49 @@ class Config(QConfig):
     language = OptionsConfigItem(
         "MainWindow", "Language", Language.AUTO, OptionsValidator(Language), LanguageSerializer(), restart=True)
 
+    # 个性化：毛玻璃效果（Mica，默认开启；仅 Windows 11 生效）
+    micaEnabled = ConfigItem("Personalization", "MicaEnabled", True, BoolValidator())
+
+    # 个性化：导航默认展开（默认开启）
+    navigationExpanded = ConfigItem("Personalization", "NavigationExpanded", True, BoolValidator())
+
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
-<<<<<<< HEAD
-    version = ConfigItem("Update", "Version", 'V1.0.5')
-=======
-    version = ConfigItem("Update", "Version", 'V1.0.3')
+    version = ConfigItem("Update", "Version", 'V1.0.7')
 
->>>>>>> origin/main
+    year = ConfigItem("Update", "Year", '2026')
 
-VERSION_NO = 'V1.0.5'
-YEAR = 2025
+    # 拷贝漫画地址
+    copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
+
+    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.kid1412.by')
+
+    # 拷贝漫画 authorization token（可选，留空则匿名访问；参考 Breeze 插件 auth.token）
+    copy_token = ConfigItem("CopyVersion", "CopyToken", '')
+
+    # 拷贝漫画代理（可选，梯子本地端口如 http://127.0.0.1:7890；留空=直连，适合 TUN 模式全局路由）
+    copy_proxy = ConfigItem("CopyVersion", "CopyProxy", '')
+
+    # z-library 账号登录态（登录成功后保存 token，下次免登录；不存密码）
+    zlibrary_email = ConfigItem("Zlibrary", "Email", '')
+    zlibrary_username = ConfigItem("Zlibrary", "Username", '')
+    zlibrary_remix_userid = ConfigItem("Zlibrary", "RemixUserid", '')
+    zlibrary_remix_userkey = ConfigItem("Zlibrary", "RemixUserkey", '')
+
+    # 是否使用内置 z-library 账号（轮询下载，全局每日5本，无需登录）
+    use_zlibrary_builtin_account = ConfigItem("Book", "UseBuiltinAccount", False, BoolValidator())
+
+VERSION_NO = 'V1.0.7'
+YEAR = 2026
 AUTHOR = "甜甜的王甜甜"
 HELP_URL = "https://support.qq.com/products/656074"
 GITHUBURL = "https://github.com/hlning/cmbok"
-QQ_URL = "http://qm.qq.com/cgi-bin/qm/qr?_wv=1027&k=5FjE0PlWCd4oestQLV2mrFuJRq8Ti-o5&authKey=X2t8fw62TNezzfFlvOtvBUbuffHRXuSOQzXOk4xHxtbEPO8Yciwn6pBFXoFXFztK&noverify=0&group_code=927528211"
+# 版本检测：GitHub Releases API（无需后台）
+GITHUB_RELEASE_API = "https://api.github.com/repos/hlning/cmbok/releases/latest"
+# 公告：仓库内 notification.json，经 jsDelivr CDN 拉取（国内可访问）
+NOTIFICATION_URL = "https://cdn.jsdelivr.net/gh/hlning/cmbok@main/notification.json"
+QQ_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=UJg9rCpoodLcpWGfFguhn9aRBO8i%2FMeQROFiMa5Xaw1DoTtz7JOEOvRcobUAhxAf&busi_data=eyJncm91cENvZGUiOiIxMDAzNzczMDA1IiwidG9rZW4iOiJnQ0dBWlRkOVdKQ3BteGhjSkFNcnVlZ1RPcmRQK3JFaVJuWS9mblNheXBZVUxwaEVNTVRCVENDaVdXTUxlQ2RiIiwidWluIjoiMjMyODg5MzYxMiJ9&data=eR26EQcAE3uiE4QF0IUFlX0NH1JUHyxoAGZbJnsHiT_-88NWV2Ybbp8q9OwC3va4LBGNHTyq_dJqeEZd14dK7Q&svctype=4&tempid=h5_group_info"
 LOG_PATH = 'app/app.log'
 
 cfg = Config()

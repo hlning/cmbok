@@ -35,10 +35,9 @@ class ComicInterface(ScrollArea):
         self.setWidgetResizable(True)
 
         self.vBoxLayout.setContentsMargins(0, 0, 0, 15)
-        self.vBoxLayout.setSpacing(40)
+        self.vBoxLayout.setSpacing(5)
         self.vBoxLayout.addWidget(self.banner)
-        self.vBoxLayout.addWidget(self.basicInputView)
-        self.vBoxLayout.setAlignment(Qt.AlignTop)
+        self.vBoxLayout.addWidget(self.basicInputView, 1)
 
     def infoShow(self, status):
         if status == 'success':

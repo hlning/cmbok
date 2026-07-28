@@ -33,8 +33,7 @@ class BookInterface(ScrollArea):
         self.setWidgetResizable(True)
 
         self.vBoxLayout.setContentsMargins(60, 20, 30, 40)
-        self.vBoxLayout.addWidget(self.basicInputView)
-        self.vBoxLayout.setAlignment(Qt.AlignTop)
+        self.vBoxLayout.addWidget(self.basicInputView, 1)
 
     # 温馨提示
     def infoShow(self, status):

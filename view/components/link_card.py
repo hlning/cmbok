@@ -12,7 +12,7 @@ class LinkCard(QFrame):
     def __init__(self, icon, title, content, url, parent=None):
         super().__init__(parent=parent)
         self.url = QUrl(url)
-        self.setFixedSize(198, 270)
+        self.setFixedHeight(270)
         self.iconWidget = IconWidget(icon, self)
         self.titleLabel = QLabel(title, self)
         self.contentLabel = QLabel(TextWrap.wrap(content, 28, False)[0], self)
@@ -53,7 +53,7 @@ class LinkCardView(SingleDirectionScrollArea):
         self.view = QWidget(self)
         self.hBoxLayout = QHBoxLayout(self.view)
 
-        self.hBoxLayout.setContentsMargins(36, 0, 0, 0)
+        self.hBoxLayout.setContentsMargins(36, 0, 36, 0)
         self.hBoxLayout.setSpacing(12)
         self.hBoxLayout.setAlignment(Qt.AlignLeft)
 
@@ -65,7 +65,26 @@ class LinkCardView(SingleDirectionScrollArea):
         self.view.setObjectName('view')
         StyleSheet.LINK_CARD.apply(self)
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._adjustCardWidths()
+
+    def _adjustCardWidths(self):
+        """按视口宽度自适应卡片宽度，与搜索框宽度保持一致"""
+        margins = self.hBoxLayout.contentsMargins()
+        avail = self.viewport().width() - margins.left() - margins.right()
+        spacing = self.hBoxLayout.spacing()
+        n = self.hBoxLayout.count()
+        if n == 0 or avail <= 0:
+            return
+        card_w = max(180, (avail - spacing * (n - 1)) // n)
+        for i in range(n):
+            item = self.hBoxLayout.itemAt(i)
+            if item and item.widget():
+                item.widget().setFixedWidth(card_w)
+
     def addCard(self, icon, title, content, url):
         """ add link card """
         card = LinkCard(icon, title, content, url, self.view)
         self.hBoxLayout.addWidget(card, 0, Qt.AlignLeft)
+        self._adjustCardWidths()

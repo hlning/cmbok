@@ -20,7 +20,6 @@
         <file>images/koodoreader_white.svg</file>
         <file>images/website_black.svg</file>
         <file>images/website_white.svg</file>
-<<<<<<< HEAD
         <file>images/file_manager_black.svg</file>
         <file>images/file_manager_white.svg</file>
         <file>images/width_black.svg</file>
@@ -31,8 +30,6 @@
         <file>images/tool_white.svg</file>
         <file>images/komga_white.svg</file>
         <file>images/komga_black.svg</file>
-=======
->>>>>>> origin/main
 
         <file>images/header.jpeg</file>
         <file>images/header.png</file>
@@ -40,21 +37,27 @@
         <file>images/comic_cover.png</file>
         <file>images/book_cover.png</file>
         <file>images/loading.gif</file>
-<<<<<<< HEAD
         <file>images/folder.png</file>
         <file>images/to_pdf.png</file>
         <file>images/merge_pdf.png</file>
         <file>images/to_epub.png</file>
         <file>images/to_doc.png</file>
-=======
->>>>>>> origin/main
 
         <file>images/wx.png</file>
+
+        <file>images/login.png</file>
+        <file>images/no-login-black.png</file>
+        <file>images/no-login-white.png</file>
 
         <file>images/recommend1.jpg</file>
         <file>images/recommend2.jpg</file>
         <file>images/recommend3.jpg</file>
         <file>images/recommend4.jpg</file>
+
+        <file>images/moon_black.svg</file>
+        <file>images/moon_white.svg</file>
+        <file>images/sun_black.svg</file>
+        <file>images/sun_white.svg</file>
 
         <file>qss/dark/gallery_interface.qss</file>
         <file>qss/dark/comic_interface.qss</file>

@@ -1,21 +1,16 @@
 # coding:utf-8
 import logging
 import math
-import re
 import traceback
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-<<<<<<< HEAD:view/components/comic_search_card.py
 from PyQt5.QtGui import QColor, QPixmap, QMovie, QDesktopServices
-=======
-from PyQt5.QtGui import QColor, QPixmap, QMovie
->>>>>>> origin/main:components/comic_search_card.py
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
-from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget
-from qfluentwidgets import TextWrap, FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
-    PipsScrollButtonDisplayMode, FluentIcon, TransparentToolButton, Flyout, \
+from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget, QScrollArea
+from qfluentwidgets import TextWrap, FlowLayout, CardWidget, SearchLineEdit, StateToolTip, \
+    FluentIcon, TransparentToolButton, Flyout, \
     CheckBox, FlyoutViewBase, BodyLabel, PrimaryPushButton, FlyoutAnimationType, SegmentedWidget, \
-    SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog
+    SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog, IndeterminateProgressBar
 
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
@@ -24,6 +19,7 @@ from service.cmbok_service import ComicSearch, ComicGroups, ComicChapters, Comic
 from utils.base_utils import truncate_string, get_current_time
 from view.components.folder_tree import TreeFrame
 from view.components.info_bar_tip import show_tip
+from view.components.pagination_bar import PaginationBar
 
 
 # 搜索区域
@@ -43,26 +39,41 @@ class ComicSearchCardView(QWidget):
         self.comic_name = ''
         self.is_search = True
 
-        # 分页器
-        self.pager = PipsPager(Qt.Horizontal)
-        # 设置页数
-        self.pager.setPageNumber(0)
-        # 设置当前页码
-        self.pager.setCurrentIndex(0)
-        # 设置圆点数量
-        self.pager.setVisibleNumber(6)
-        # 始终显示前进和后退按钮
-        self.pager.setNextButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        self.pager.setPreviousButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        # 页码切换
-        self.pager.currentIndexChanged.connect(lambda index: self.getComics(index))
+        # 分页栏
+        self._pageSize = 9
+        self._total = 0
+        self._pendingPage = 0
+        self._currentPage = 0
+        self.pager = PaginationBar([9, 27], self)
+        self.pager.pageChanged.connect(self.getComics)
+        self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setVisible(False)
 
         self.vBoxLayout = QVBoxLayout(self)
-        self.flowLayout = FlowLayout()
+
+        # 搜索结果滚动区（搜索区固定顶部、分页固定底部，仅结果区滚动）
+        self.resultScrollArea = QScrollArea(self)
+        self.resultScrollArea.setWidgetResizable(True)
+        self.resultScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.resultScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.resultScrollArea.setFrameShape(QFrame.NoFrame)
+        self.resultScrollArea.setStyleSheet(
+            'QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget '
+            '{ background: transparent; border: none; }'
+            'QScrollBar:vertical { background: transparent; width: 3px; margin: 0; }'
+            'QScrollBar::handle:vertical { background: rgba(128, 128, 128, 120); '
+            'border-radius: 4px; min-height: 30px; }'
+            'QScrollBar::handle:vertical:hover { background: rgba(128, 128, 128, 200); }'
+            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }')
+        self.resultScrollWidget = QWidget(self.resultScrollArea)
+        self.resultScrollWidget.setStyleSheet('background: transparent;')
+        self.flowLayout = FlowLayout(self.resultScrollWidget)
+        self.resultScrollArea.setWidget(self.resultScrollWidget)
 
         self.stateTooltip = None
 
-        self.vBoxLayout.setContentsMargins(36, 0, 36, 0)
+        self.vBoxLayout.setContentsMargins(36, 0, 36, 24)
         self.vBoxLayout.setSpacing(10)
         self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.flowLayout.setHorizontalSpacing(12)
@@ -70,8 +81,8 @@ class ComicSearchCardView(QWidget):
 
         self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addWidget(self.lineEdit)
-        self.vBoxLayout.addLayout(self.flowLayout, 1)
-        self.vBoxLayout.addWidget(self.pager, 1, alignment=Qt.AlignRight | Qt.AlignVCenter)
+        self.vBoxLayout.addWidget(self.resultScrollArea, 1)
+        self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignRight)
 
         self.titleLabel.setObjectName('viewTitleLabel')
         StyleSheet.SAMPLE_CARD.apply(self)
@@ -112,35 +123,23 @@ class ComicSearchCardView(QWidget):
                 if comic is not None:
                     comics = comic['list']
                     if len(comics) > 0:
-                        # 清空流布局中的所有控件
-                        self.flowLayout.takeAllWidgets()
                         if self.is_search:
                             self.comic_list = comics
-
-                            # 显示分页器
                             total = int(comic['total'])
-                            pageNumber = math.ceil(comic['total'] / 9)
-
-                            if pageNumber > 1:
-                                # 设置页数
-                                self.pager.setPageNumber(pageNumber)
-                            else:
-                                # 设置页数
-                                self.pager.setPageNumber(1)
-                            # 设置圆点数量
-                            self.pager.setVisibleNumber(6 if pageNumber > 6 else pageNumber)
-
-                            self.titleLabel.setText(
-                                f'搜索结果（“{self.comic_name}”共{total}条结果，共{pageNumber}页，当前第1页）')
+                            self._total = total
+                            self.titleLabel.setText('搜索结果')
+                            self.pager.setVisible(True)
+                            self.pager.setPage(0, math.ceil(total / self._pageSize), total)
+                            self.getComics(0)
                             self.stateTooltip.setContent('加载完成啦，(*^▽^*)')
                         else:
                             self.comic_list.extend(comics)
-                            page_index = self.pager.currentIndex()
-                            index = int(comic['limit']) / int(int(comic['offset']))
-                            self.getComics(page_index if page_index != index else index)
+                            self.getComics(self._pendingPage)
                     else:
+                        self.pager.setVisible(False)
                         self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
                 else:
+                    self.pager.setVisible(False)
                     self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
         except Exception as e:
             self.stateTooltip.setContent('系统异常，o(╥﹏╥)o')
@@ -152,24 +151,47 @@ class ComicSearchCardView(QWidget):
 
     # 从缓存中直接获取图书
     def getComics(self, index):
+        self._currentPage = index
         comic_size = len(self.comic_list)
         if comic_size > 0:
-            comic_page = math.ceil(comic_size / 9)
-            # 查询新的图书
+            comic_page = math.ceil(comic_size / self._pageSize)
+            # 查询新的漫画（每批 27 条）
             if index + 1 > comic_page:
+                self._pendingPage = index
                 self.searchComic(self.comic_name, int(comic_size / 27), False)
             else:
                 # 清空流布局中的所有控件
                 self.flowLayout.takeAllWidgets()
-                for comic in self.comic_list[index * 9:(index + 1) * 9]:
+                for comic in self.comic_list[index * self._pageSize:(index + 1) * self._pageSize]:
                     self.addSampleCard(comic)
-            # 更新当前页码
-            page_info = self.titleLabel.text()
-            self.titleLabel.setText(re.sub(r'当前第(\d+)页', f'当前第{index + 1}页', page_info))
+                # 更新分页栏当前页
+                self.pager.setPage(index, math.ceil(self._total / self._pageSize), self._total)
+
+    # 每页条数变化
+    def _onPageSizeChanged(self, size):
+        self._pageSize = size
+        if self.comic_list:
+            self.pager.setPage(0, math.ceil(self._total / self._pageSize), self._total)
+            self.getComics(0)
+
+    # 每行3个的卡片宽度
+    def _cardWidth(self):
+        vw = self.resultScrollArea.viewport().width()
+        if vw <= 0:
+            return 268
+        # 预留纵向滚动条宽度，避免滚动条出现后每行少一个卡片
+        return max(200, (vw - 5 - 2 * self.flowLayout.horizontalSpacing()) // 3)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        # 窗口缩放时重排当前页，保持每行3个
+        if self.comic_list and self.pager.isVisible() and self.stateTooltip is None:
+            self.getComics(self._currentPage)
 
     def addSampleCard(self, comic):
         """ add sample card """
         card = ComicCard(comic, self)
+        card.setFixedWidth(self._cardWidth())
         self.flowLayout.addWidget(card)
 
 
@@ -197,7 +219,7 @@ class ComicCard(CardWidget):
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
 
-        self.setFixedSize(268, 90)
+        self.setFixedHeight(90)
 
         self.hBoxLayout.setSpacing(28)
         self.hBoxLayout.setContentsMargins(20, 0, 0, 0)
@@ -291,7 +313,7 @@ class ComicCard(CardWidget):
         try:
             if not self.is_collect:
                 # 收藏
-                w = TreeMessageBox(self.parent().parent())
+                w = TreeMessageBox(self.window())
                 if w.exec():
                     # 遍历树节点获取选中的节点
                     selected_items = w.treeFrame.tree.selectedItems()
@@ -379,6 +401,17 @@ class DownloadFlyoutView(FlyoutViewBase):
         self.hBoxLayout.addWidget(self.iconWidget)
         self.vBoxLayout.addWidget(self.label)
 
+        # 章节加载动画（加载较慢，避免误以为失败）
+        self.loadingWidget = QWidget(self)
+        loadingLayout = QVBoxLayout(self.loadingWidget)
+        loadingLayout.setContentsMargins(0, 0, 0, 0)
+        self.loadingLabel = BodyLabel('正在加载章节，请稍候...', self.loadingWidget)
+        self.loadingBar = IndeterminateProgressBar(self.loadingWidget)
+        loadingLayout.addWidget(self.loadingLabel)
+        loadingLayout.addWidget(self.loadingBar)
+        self.vBoxLayout.addWidget(self.loadingWidget)
+        self._pendingGroupView = None
+
         # 分组类型导航栏
         # 获取分组信息
         self.comicChapters = ComicGroups(path_word=path_word)
@@ -433,25 +466,35 @@ class DownloadFlyoutView(FlyoutViewBase):
     def loadComicGroups(self, status, results):
         try:
             if status == 'fail':
+                self.loadingWidget.setVisible(False)
                 show_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', self.parent(),
                          InfoBarPosition.TOP_RIGHT)
             elif status == 'timeout':
+                self.loadingWidget.setVisible(False)
                 show_tip(InfoBarIcon.ERROR, '温馨提示', '请求超时了，(。・＿・。)ﾉI’m sorry~', self.parent(),
                          InfoBarPosition.TOP_RIGHT)
             elif status == 'error':
+                self.loadingWidget.setVisible(False)
                 show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常，(。・＿・。)ﾉI’m sorry~', self.parent(),
                          InfoBarPosition.TOP_RIGHT)
             else:
-                self.vBoxLayout.addWidget(ChapterGroupView(results))
+                # 先创建分组视图（内部启动章节加载），暂不加入布局；章节就绪后用章节区替换进度条
+                self._pendingGroupView = ChapterGroupView(results, self._showChapters)
         except Exception as e:
             logging.info(traceback.format_exc())
-            logging.info('获取漫画分组结果失败')
+
+    def _showChapters(self):
+        # 首个分组章节加载完成：隐藏进度条，显示章节区
+        self.loadingWidget.setVisible(False)
+        if self._pendingGroupView is not None:
+            self.vBoxLayout.addWidget(self._pendingGroupView)
+            self._pendingGroupView = None
 
 
 # 目录分组导航窗口
 class ChapterGroupView(QWidget):
 
-    def __init__(self, data, parent=None):
+    def __init__(self, data, on_loaded=None, parent=None):
         super().__init__(parent)
 
         self.pivot = SegmentedWidget(self)
@@ -459,9 +502,12 @@ class ChapterGroupView(QWidget):
         self.vBoxLayout = QVBoxLayout(self)
 
         groups = data['groups']
+        first = True
         for key in groups:
             group = groups[key]
-            groupInterface = ChapterTypeView(data['comic_path_word'], group['path_word'], group['count'])
+            groupInterface = ChapterTypeView(data['comic_path_word'], group['path_word'], group['count'],
+                                             on_loaded=on_loaded if first else None)
+            first = False
             self.addSubInterface(groupInterface, group['name'], group['name'])
 
         self.vBoxLayout.addWidget(self.pivot)
@@ -484,8 +530,9 @@ class ChapterGroupView(QWidget):
 # 目录类型导航窗口
 class ChapterTypeView(QWidget):
 
-    def __init__(self, comic_path_word, group_path_word, group_count, parent=None):
+    def __init__(self, comic_path_word, group_path_word, group_count, on_loaded=None, parent=None):
         super().__init__(parent)
+        self.on_loaded = on_loaded
         self.pivot = SegmentedWidget(self)
         self.stackedWidget = QStackedWidget(self)
         self.vBoxLayout = QVBoxLayout(self)
@@ -540,6 +587,10 @@ class ChapterTypeView(QWidget):
 
                 self.vBoxLayout.addWidget(self.pivot)
                 self.vBoxLayout.addWidget(self.stackedWidget)
+            # 首个分组的章节加载完成，隐藏外层加载动画
+            if self.on_loaded:
+                self.on_loaded()
+                self.on_loaded = None
         except Exception as e:
             logging.info(traceback.format_exc())
             logging.info('获取漫画目录结果失败')

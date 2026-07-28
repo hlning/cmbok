@@ -2,17 +2,17 @@
 import datetime
 import logging
 import math
-import re
 import traceback
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
 from PyQt5.QtGui import QPixmap, QMovie
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout
-from qfluentwidgets import FlowLayout, CardWidget, SearchLineEdit, StateToolTip, PipsPager, \
-    PipsScrollButtonDisplayMode, FluentIcon, TransparentToolButton, BodyLabel, InfoBarPosition, InfoBarIcon, \
-    CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame
+from qfluentwidgets import FlowLayout, CardWidget, SearchLineEdit, StateToolTip, \
+    FluentIcon, TransparentToolButton, BodyLabel, InfoBarPosition, InfoBarIcon, \
+    CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton, PushButton, MessageBox
 
+from common.config import cfg
 from common.const import language_item
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
@@ -20,7 +20,9 @@ from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import BookSearch, Book, BookDownload
 from utils.base_utils import truncate_string, get_current_time
 from view.components.folder_tree import TreeFrame
+from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.info_bar_tip import show_tip
+from view.components.pagination_bar import PaginationBar
 
 
 # 搜索区域
@@ -43,8 +45,8 @@ class BookSearchCardView(QWidget):
 
         # 搜索输入框
         self.hBoxLayout1 = QHBoxLayout()
+        self.hBoxLayout1.setSpacing(6)
         self.lineEdit = SearchLineEdit()
-        self.lineEdit.setFixedWidth(700)
         self.lineEdit.setPlaceholderText('请输入图书名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchBook(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
@@ -53,7 +55,7 @@ class BookSearchCardView(QWidget):
         self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
         self.resetBtn.clicked.connect(self.reset)
 
-        self.hBoxLayout1.addWidget(self.lineEdit)
+        self.hBoxLayout1.addWidget(self.lineEdit, 1)
         self.hBoxLayout1.addWidget(self.resetBtn)
 
         self.vBoxLayout.addLayout(self.hBoxLayout1)
@@ -100,25 +102,43 @@ class BookSearchCardView(QWidget):
         self.hBoxLayout2.addWidget(self.extensionsComboBox)
         self.vBoxLayout.addLayout(self.hBoxLayout2)
 
-        # 分页器
-        self.pager = PipsPager(Qt.Horizontal)
-        # 设置当前页
-        self.pager.setCurrentIndex(0)
-        # 始终显示前进和后退按钮
-        self.pager.setNextButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        self.pager.setPreviousButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        # 页码切换
-        self.pager.currentIndexChanged.connect(lambda index: self.getBooks(index))
+        # 分页栏
+        self._pageSize = 10
+        self._total = 0
+        self._pendingPage = 0
+        self.pager = PaginationBar(parent=self)
+        self.pager.pageChanged.connect(self.getBooks)
+        self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setVisible(False)
 
-        self.flowLayout = FlowLayout()
+        # 搜索结果滚动区（搜索区固定顶部、分页固定底部，仅结果区滚动）
+        self.resultScrollArea = QScrollArea(self)
+        self.resultScrollArea.setWidgetResizable(True)
+        self.resultScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.resultScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.resultScrollArea.setFrameShape(QFrame.NoFrame)
+        # 透明背景 + 细滚动条
+        self.resultScrollArea.setStyleSheet(
+            'QScrollArea, QScrollArea > QWidget, QScrollArea > QWidget > QWidget '
+            '{ background: transparent; border: none; }'
+            'QScrollBar:vertical { background: transparent; width: 3px; margin: 0; }'
+            'QScrollBar::handle:vertical { background: rgba(128, 128, 128, 120); '
+            'border-radius: 4px; min-height: 30px; }'
+            'QScrollBar::handle:vertical:hover { background: rgba(128, 128, 128, 200); }'
+            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }')
+        self.resultScrollWidget = QWidget(self.resultScrollArea)
+        self.resultScrollWidget.setStyleSheet('background: transparent;')
+        self.flowLayout = AutoFlowLayout(self.resultScrollWidget)
+        self.resultScrollArea.setWidget(self.resultScrollWidget)
 
         self.vBoxLayout.setContentsMargins(15, 0, 36, 0)
         self.vBoxLayout.setSpacing(10)
         self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.flowLayout.setHorizontalSpacing(12)
         self.flowLayout.setVerticalSpacing(12)
-        self.vBoxLayout.addLayout(self.flowLayout, 1)
-        self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter | Qt.AlignVCenter)
+        self.vBoxLayout.addWidget(self.resultScrollArea, 1)
+        self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignRight)
 
         self.titleLabel.setObjectName('viewTitleLabel')
         StyleSheet.SAMPLE_CARD.apply(self)
@@ -140,6 +160,10 @@ class BookSearchCardView(QWidget):
         if text is not None and text != '' and self.stateTooltip is None:
             self.book_name = text
             self.is_search = is_search
+            # 内置账号模式不需登录；自有账号模式需登录
+            if not cfg.get(cfg.use_zlibrary_builtin_account) and not self._is_logged_in():
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '请先登录，或者到设置中开启内置账号', self, InfoBarPosition.TOP)
+                return
 
             self.stateTooltip = StateToolTip('正在加载', '请耐心等待~~', self)
             self.stateTooltip.move(270, 25)
@@ -163,6 +187,10 @@ class BookSearchCardView(QWidget):
         elif text is not None and text == '':
             show_tip(InfoBarIcon.WARNING, '温馨提示', '请输入图书名称进行搜索o(￣▽￣)ｄ', self)
 
+    # 是否已登录 z-library
+    def _is_logged_in(self):
+        return bool(cfg.get(cfg.zlibrary_remix_userid)) and bool(cfg.get(cfg.zlibrary_remix_userkey))
+
     # 加载图书搜索结果区域
     def loadBookCard(self, status, results):
         try:
@@ -173,6 +201,14 @@ class BookSearchCardView(QWidget):
                 self.stateTooltip.setContent('请求超时了，(。・＿・。)ﾉI’m sorry~')
             elif status == 'error':
                 self.stateTooltip.setContent('系统异常，(。・＿・。)ﾉI’m sorry~')
+            elif status == 'no_login':
+                cfg.set(cfg.zlibrary_remix_userid, '')
+                cfg.set(cfg.zlibrary_remix_userkey, '')
+                self.stateTooltip.setContent('登录已失效，请重新搜索并登录')
+            elif status == 'no_account':
+                self.stateTooltip.setContent('没有可用的内置账号，o(╥﹏╥)o')
+            elif status == 'no_num':
+                self.stateTooltip.setContent('今日内置账号下载已达上限（5本），明天再试吧o(╥﹏╥)o')
             else:
                 self.stateTooltip.setTitle('加载完成')
 
@@ -180,33 +216,20 @@ class BookSearchCardView(QWidget):
                     pagination = results['pagination']
                     books = results['books']
                     if len(books) > 0:
+                        self.pager.setVisible(True)
                         if self.is_search:
                             self.book_list = books
-
-                            # 更新分页器
                             total = pagination['total_items']
-                            pageNumber = math.ceil(total / 8)
-
-                            if pageNumber > 1:
-                                # 设置页数
-                                self.pager.setPageNumber(pageNumber)
-                                # 设置圆点数量
-                                self.pager.setVisibleNumber(10 if pageNumber > 10 else pageNumber)
-                            else:
-                                # 设置页数
-                                self.pager.setPageNumber(1)
-                            # 设置圆点数量
-                            self.pager.setVisibleNumber(10 if pageNumber > 10 else pageNumber)
-
-                            self.titleLabel.setText(
-                                f'搜索结果（“{truncate_string(self.book_name, 15)}”共{total}条结果，共{pageNumber}页，当前第1页）')
+                            self._total = total
+                            self.titleLabel.setText('搜索结果')
+                            self.pager.setPage(0, math.ceil(total / self._pageSize), total)
+                            self.getBooks(0)
                             self.stateTooltip.setContent('加载完成啦，(*^▽^*)')
                         else:
                             self.book_list.extend(books)
-                            page_index = self.pager.currentIndex()
-                            index = int(40 / 8 * (pagination['current'] - 1))
-                            self.getBooks(page_index if page_index != index else index)
+                            self.getBooks(self._pendingPage)
                     else:
+                        self.pager.setVisible(False)
                         self.stateTooltip.setContent('一本图书都没有搜索到，o(╥﹏╥)o')
         except Exception:
             self.stateTooltip.setContent('系统异常，o(╥﹏╥)o')
@@ -220,23 +243,47 @@ class BookSearchCardView(QWidget):
     def getBooks(self, index):
         book_size = len(self.book_list)
         if book_size > 0:
-            book_page = math.ceil(book_size / 8)
+            book_page = math.ceil(book_size / self._pageSize)
             # 查询新的图书
             if index + 1 > book_page:
-                self.searchBook(self.book_name, int(book_size / 40), False)
+                self._pendingPage = index
+                self.searchBook(self.book_name, int(book_size / 60), False)
             else:
                 # 清空流布局中的所有控件
                 self.flowLayout.takeAllWidgets()
-                for book in self.book_list[index * 8:(index + 1) * 8]:
+                for book in self.book_list[index * self._pageSize:(index + 1) * self._pageSize]:
                     self.addSampleCard(book)
-            # 更新当前页码
-            page_info = self.titleLabel.text()
-            self.titleLabel.setText(re.sub(r'当前第(\d+)页', f'当前第{index + 1}页', page_info))
+                # 更新分页栏当前页
+                self.pager.setPage(index, math.ceil(self._total / self._pageSize), self._total)
+
+    # 每页条数变化
+    def _onPageSizeChanged(self, size):
+        self._pageSize = size
+        if self.book_list:
+            self.pager.setPage(0, math.ceil(self._total / self._pageSize), self._total)
+            self.getBooks(0)
+
+    # 搜索框+重置按钮的宽度，用于卡片自适应
+    def _searchRowWidth(self):
+        rw = self.resetBtn.width() or self.resetBtn.sizeHint().width()
+        return self.lineEdit.width() + self.hBoxLayout1.spacing() + rw
 
     def addSampleCard(self, book):
         """ add sample card """
         card = BookCard(book, self)
+        card.setFixedWidth(self._searchRowWidth())
         self.flowLayout.addWidget(card)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 窗口宽度变化时，已存在的搜索结果卡片跟随搜索行宽度自适应
+        if self.flowLayout.count() > 0:
+            w = self._searchRowWidth()
+            for i in range(self.flowLayout.count()):
+                item = self.flowLayout.itemAt(i)
+                if item and item.widget():
+                    item.widget().setFixedWidth(w)
+            self.flowLayout.invalidate()
 
 
 # 图书卡片
@@ -267,7 +314,7 @@ class BookCard(CardWidget):
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
 
-        self.setFixedSize(750, 73)
+        self.setFixedHeight(73)
         self.authorLabel.setTextColor("#606060", "#d2d2d2")
 
         self.hBoxLayout.setContentsMargins(20, 11, 11, 11)
@@ -354,6 +401,19 @@ class BookCard(CardWidget):
 
     # 下载图书
     def downloadBook(self, book):
+        # 内置账号模式：下载前检查今日是否已达上限，超过则提示并不再下载
+        if cfg.get(cfg.use_zlibrary_builtin_account):
+            from service.cmbok_service import get_builtin_download_count, BUILTIN_DAILY_LIMIT
+            if get_builtin_download_count() >= BUILTIN_DAILY_LIMIT:
+                MessageBox('提示', f'今日内置账号下载已达 {BUILTIN_DAILY_LIMIT} 本上限，请明天再试或改用自有账号下载。',
+                           self.window()).exec()
+                return
+        else:
+            from service.cmbok_service import get_logged_download_count, LOGGED_DAILY_LIMIT
+            if get_logged_download_count(cfg.get(cfg.zlibrary_remix_userid)) >= LOGGED_DAILY_LIMIT:
+                MessageBox('提示', f'今日下载已达 {LOGGED_DAILY_LIMIT} 本上限，请明天再试。',
+                           self.window()).exec()
+                return
         self.bookDownload = BookDownload(book=book)
         self.bookDownload.success.connect(self.downloadBookStatus)
         self.bookDownload.start()
@@ -372,7 +432,7 @@ class BookCard(CardWidget):
         try:
             if not self.is_collect:
                 # 收藏
-                w = TreeMessageBox(self.parent().parent())
+                w = TreeMessageBox(self.window())
                 if w.exec():
                     # 遍历树节点获取选中的节点
                     selected_items = w.treeFrame.tree.selectedItems()

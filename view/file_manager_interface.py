@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QFileSystemModel,
-    QWidget, QMessageBox, QHBoxLayout, QAction
+    QWidget, QMessageBox, QHBoxLayout, QAction, QHeaderView
 )
 from qfluentwidgets import TreeView, FluentIcon, Action, RoundMenu, InfoBarIcon, InfoBarPosition, MessageBox, \
     MessageBoxBase, SubtitleLabel, LineEdit, CaptionLabel
@@ -57,7 +57,13 @@ class FileManagerInterface(QWidget):
         self.model.setRootPath(download_path)
         self.treeView.setModel(self.model)
         self.treeView.setRootIndex(self.model.index(download_path))
-        self.treeView.setColumnWidth(0, 450)  # 设置第一列宽度
+        # 表头列自适应：名称列随窗口拉伸，其余列按内容宽度
+        header = self.treeView.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
 
         # 右键菜单
         self.treeView.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -68,7 +74,7 @@ class FileManagerInterface(QWidget):
         self.treeView.setBorderVisible(True)
         self.treeView.setBorderRadius(8)
 
-        self.hBoxLayout.addWidget(self.treeView)
+        self.hBoxLayout.addWidget(self.treeView, 1)
         self.hBoxLayout.setContentsMargins(50, 30, 50, 30)
 
     def contextMenuEvent(self, event):

@@ -4,11 +4,7 @@ import math
 from uuid import uuid1
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-<<<<<<< HEAD
 from PyQt5.QtGui import QPixmap, QMovie, QColor
-=======
-from PyQt5.QtGui import QPixmap, QMovie
->>>>>>> origin/main
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget
 from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, CaptionLabel, \
@@ -17,12 +13,14 @@ from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, CaptionLabel, \
     SubtitleLabel, LineEdit, MessageBox, BreadcrumbBar, setFont
 
 from common.sqlite_util import SQLiteDatabase
+from common.config import cfg
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import ComicCollects, BookDownload
 from utils.base_utils import get_current_time, truncate_string
 from view.components.comic_search_card import DownloadFlyoutView
 from view.components.folder_tree import TreeFrame
+from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.info_bar_tip import show_tip
 
 
@@ -139,7 +137,7 @@ class CollectWidget(QWidget):
         self.breadcrumbBar.currentItemChanged.connect(lambda routeKey: self.changeBreadcrumbBar(routeKey))
         self.vBoxLayout.addWidget(self.breadcrumbBar)
 
-        self.flowLayout = FlowLayout()
+        self.flowLayout = AutoFlowLayout()
         # 查询收藏记录
         self.vBoxLayout.addLayout(self.flowLayout)
 
@@ -218,19 +216,45 @@ class CollectWidget(QWidget):
     # 流动布局
     def updateView(self, status, comics):
         if status == 'success':
-            for comic in comics:
-                card = CollectCard(
-                    id=comic.id,
-                    cover=comic.cover,
-                    name=comic.name,
-                    author=comic.author,
-                    key=comic.key,
-                    book_hash=comic.book_hash,
-                    extension=comic.book_extension,
-                    type=self.type,
-                    is_folder=comic.is_folder
-                )
-                self.flowLayout.addWidget(card)
+            with SQLiteDatabase() as db:
+                for comic in comics:
+                    author = comic.author
+                    if comic.is_folder == 'folder':
+                        # 文件夹显示其下收藏文件数量
+                        cnt = db.count_data('cmbok_collection_record', {'folder_id': comic.id})
+                        author = f'{cnt} 个文件'
+                    card = CollectCard(
+                        id=comic.id,
+                        cover=comic.cover,
+                        name=comic.name,
+                        author=author,
+                        key=comic.key,
+                        book_hash=comic.book_hash,
+                        extension=comic.book_extension,
+                        type=self.type,
+                        is_folder=comic.is_folder
+                    )
+                    self.flowLayout.addWidget(card)
+        self._layoutCards()
+
+    # 窗口宽度变化时，卡片每行 2 个、宽度自适应
+    def _layoutCards(self):
+        n = 2
+        lm = self.vBoxLayout.contentsMargins()
+        fm = self.flowLayout.contentsMargins()
+        avail = self.width() - lm.left() - lm.right() - fm.left() - fm.right()
+        hs = self.flowLayout.horizontalSpacing()
+        hs = hs if hs and hs > 0 else 10
+        card_w = max(int(avail / n) - hs, 100)
+        for i in range(self.flowLayout.count()):
+            item = self.flowLayout.itemAt(i)
+            if item and item.widget():
+                item.widget().setFixedWidth(card_w)
+        self.flowLayout.invalidate()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layoutCards()
 
     # 右键菜单
     def contextMenuEvent(self, event):
@@ -451,6 +475,19 @@ class CollectCard(CardWidget):
 
     # 下载图书
     def downloadBook(self, cover, name, author, key, book_hash, extension):
+        # 内置账号模式：下载前检查今日是否已达上限，超过则提示并不再下载
+        if cfg.get(cfg.use_zlibrary_builtin_account):
+            from service.cmbok_service import get_builtin_download_count, BUILTIN_DAILY_LIMIT
+            if get_builtin_download_count() >= BUILTIN_DAILY_LIMIT:
+                MessageBox('提示', f'今日内置账号下载已达 {BUILTIN_DAILY_LIMIT} 本上限，请明天再试或改用自有账号下载。',
+                           self.window()).exec()
+                return
+        else:
+            from service.cmbok_service import get_logged_download_count, LOGGED_DAILY_LIMIT
+            if get_logged_download_count(cfg.get(cfg.zlibrary_remix_userid)) >= LOGGED_DAILY_LIMIT:
+                MessageBox('提示', f'今日下载已达 {LOGGED_DAILY_LIMIT} 本上限，请明天再试。',
+                           self.window()).exec()
+                return
         book = {
             'cover': cover,
             'title': name,

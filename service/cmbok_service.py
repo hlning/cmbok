@@ -8,57 +8,31 @@ import re
 import time
 import traceback
 import uuid
-<<<<<<< HEAD
 from dataclasses import dataclass
-=======
->>>>>>> origin/main
 
 import aiohttp
 import httpx
 import requests
 from PyQt5.QtCore import QThread, QMutex, pyqtSignal
 from ebooklib import epub
-from httpcore import ConnectTimeout
 from natsort import natsorted
 
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
-<<<<<<< HEAD
+from service.zlibrary_client import Zlibrary
+try:
+    from service.builtin_accounts import BUILTIN_ACCOUNTS
+except ImportError:
+    BUILTIN_ACCOUNTS = []
 from utils.base_utils import get_current_time, get_file_extension, deal_url
 from utils.client_util import create_api_client
 from utils.utils_book_type_convert import img_to_pdf, convert_epub_to_mobi
-from utils.utils_files_and_folders import delete_files_with_character, del_file, del_folder, del_folder_images
-=======
-from common.util import get_current_time, analyze_data, del_folder_images, del_folder, img_to_pdf, \
-    convert_epub_to_mobi, del_file, delete_files_with_character, get_file_extension, deal_url
->>>>>>> origin/main
+from utils.utils_files_and_folders import del_file, del_folder, del_folder_images
 from view.download_interface import book_process_signals, download_signals, comic_process_signals
 
 comic_search_lock = QMutex()
 book_search_lock = QMutex()
 download_comic_lock = QMutex()
-
-URL = 'https://api.copy2000.online/'
-WEBSITE = 'https://www.copymanga.com/'
-<<<<<<< HEAD
-CMBOK_WEBSITE = 'http://154.40.47.143:5000/'
-
-
-# CMBOK_WEBSITE = 'http://x.x.x.x:5000/'
-# CMBOK_WEBSITE = 'http://127.0.0.1:5000/'
-=======
-SEARCH_WEBSITE = 'https://api.mangacopy.com/'
-CMBOK_WEBSITE = 'http://154.40.47.143:5000/'
-#CMBOK_WEBSITE = 'http://127.0.0.1:5000/'
-API_HEADER = {
-    'User-Agent': 'duoTuoCartoon/3.2.4 (iPhone; iOS 18.0.1; Scale/3.00) iDOKit/1.0.0 RSSX/1.0.0',
-    'version': datetime.datetime.now().strftime("%Y.%m.%d"),
-    'region': '0',
-    'webp': '0',
-    "platform": "1",
-    "referer": WEBSITE
-}
->>>>>>> origin/main
 
 
 # 搜索图书
@@ -82,22 +56,29 @@ class BookSearch(QThread):
     def run(self):
         book_search_lock.lock()
         try:
-            url = f'{CMBOK_WEBSITE}cmbok/zlibrary/advanced_search/{self.book.book_name}/{self.book.start_date}/{self.book.end_date}/{self.book.language}/{self.book.extensions}/{self.index}'
-            response = requests.get(url, timeout=30)
-            response.raise_for_status()
-            if response.status_code == 200:
-                results = response.json()
+            if cfg.get(cfg.use_zlibrary_builtin_account):
+                # 内置账号模式：轮询内置账号搜索
+                results = self._search_with_builtin_account()
                 if results is None:
+                    self.success.emit('no_account', None)
+                else:
+                    self._emit_success(results)
+            else:
+                # 自有账号模式：用登录 token
+                remix_userid = cfg.get(cfg.zlibrary_remix_userid)
+                remix_userkey = cfg.get(cfg.zlibrary_remix_userkey)
+                if not remix_userid or not remix_userkey:
+                    self.success.emit('no_login', None)
+                    return
+                Z = Zlibrary(remix_userid=remix_userid, remix_userkey=remix_userkey)
+                if not Z.isLoggedIn():
+                    self.success.emit('no_login', None)
+                    return
+                results = self._do_search(Z)
+                if results is None or not results.get('success'):
                     self.success.emit('fail', None)
                 else:
-                    if results['success'] == 1:
-                        self.success.emit('success', results)
-            else:
-                self.success.emit('fail', None)
-        except requests.exceptions.Timeout:
-            self.success.emit('timeout', None)
-            logging.info(traceback.format_exc())
-            logging.info('请求超时')
+                    self._emit_success(results)
         except Exception as e:
             self.success.emit('error', None)
             logging.info(traceback.format_exc())
@@ -105,12 +86,195 @@ class BookSearch(QThread):
         finally:
             book_search_lock.unlock()
 
+    def _do_search(self, Z):
+        return Z.search(
+            message=self.book.book_name,
+            yearFrom=(None if self.book.start_date == '起始年份' else self.book.start_date),
+            yearTo=(None if self.book.end_date == '截止年份' else self.book.end_date),
+            languages=(None if self.book.language == 'language' else self.book.language),
+            extensions=(None if self.book.extensions == '格式' else self.book.extensions),
+            page=self.index,
+            limit=60
+        )
+
+    def _emit_success(self, results):
+        # 精简字段，保持与原后台返回结构一致
+        new_books = []
+        for book in results.get('books', []):
+            new_books.append({
+                'id': book.get('id'),
+                'hash': book.get('hash'),
+                'title': book.get('title'),
+                'author': book.get('author'),
+                'cover': book.get('cover'),
+                'year': book.get('year'),
+                'language': book.get('language'),
+                'filesizeString': book.get('filesizeString'),
+                'extension': book.get('extension')
+            })
+        results['books'] = new_books
+        self.success.emit('success', results)
+
+    def _search_with_builtin_account(self):
+        for account in BUILTIN_ACCOUNTS:
+            Z = Zlibrary(email=account['email'], password=account['password'])
+            if not Z.isLoggedIn():
+                continue
+            results = self._do_search(Z)
+            if results and results.get('success'):
+                return results
+        return None
+
 
 # 下载图书
 # 全局图书当前下载数量
 book_active_downloads = 0
 # 下载队列
 book_waiting_queue = queue.Queue()
+# 持有所有运行中的 BookDownload 引用，防止队列派生的线程被 GC 导致闪退（QThread 运行中被回收会 segfault）
+book_download_threads = set()
+# 内置账号每日下载计数（持久化到 app/config/builtin_count.json，跨日重置，每日最多5本，重启不丢）
+BUILTIN_DAILY_LIMIT = 5
+BUILTIN_COUNT_FILE = os.path.join('app', 'config', 'builtin_count.json')
+builtin_count_lock = QMutex()
+
+
+def _read_builtin_count():
+    """读取持久化的 (date, count)"""
+    try:
+        with open(BUILTIN_COUNT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('date', ''), int(data.get('count', 0))
+    except Exception:
+        return '', 0
+
+
+def _write_builtin_count(date, count):
+    try:
+        os.makedirs(os.path.dirname(BUILTIN_COUNT_FILE), exist_ok=True)
+        with open(BUILTIN_COUNT_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'date': date, 'count': count}, f)
+    except Exception:
+        logging.info('写入内置账号计数失败: ' + traceback.format_exc())
+
+
+def get_builtin_download_count():
+    """今日内置账号已下载数量（跨日自动归零），供 UI 下载前检查"""
+    builtin_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, count = _read_builtin_count()
+        return count if date == today else 0
+    finally:
+        builtin_count_lock.unlock()
+
+
+def _reserve_builtin_download():
+    """原子检查并预留一个下载名额（计数+1）。返回 (ok, start_index)；超限返回 (False, 0)。"""
+    builtin_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, count = _read_builtin_count()
+        if date != today:
+            count = 0
+        if count >= BUILTIN_DAILY_LIMIT:
+            return False, 0
+        count += 1
+        _write_builtin_count(today, count)
+        return True, (count - 1) % max(len(BUILTIN_ACCOUNTS), 1)
+    finally:
+        builtin_count_lock.unlock()
+
+
+def _release_builtin_download():
+    """下载失败时释放预留的名额（计数-1）"""
+    builtin_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, count = _read_builtin_count()
+        if date == today and count > 0:
+            _write_builtin_count(today, count - 1)
+    finally:
+        builtin_count_lock.unlock()
+
+
+# 登录账号每日下载计数（按账号 userid 分账户，持久化到 app/config/logged_count.json，
+# 跨日重置，每个账号每日最多10本，重启不丢）
+LOGGED_DAILY_LIMIT = 10
+LOGGED_COUNT_FILE = os.path.join('app', 'config', 'logged_count.json')
+logged_count_lock = QMutex()
+
+
+def _read_logged_count():
+    """读取持久化的 (date, accounts_dict)"""
+    try:
+        with open(LOGGED_COUNT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data.get('date', ''), data.get('accounts', {}) or {}
+    except Exception:
+        return '', {}
+
+
+def _write_logged_count(date, accounts):
+    try:
+        os.makedirs(os.path.dirname(LOGGED_COUNT_FILE), exist_ok=True)
+        with open(LOGGED_COUNT_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'date': date, 'accounts': accounts}, f)
+    except Exception:
+        logging.info('写入登录账号计数失败: ' + traceback.format_exc())
+
+
+def get_logged_download_count(userid=None):
+    """今日指定账号已下载数量（跨日自动归零）；userid 为空返回 0"""
+    if not userid:
+        return 0
+    userid = str(userid)
+    logged_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, accounts = _read_logged_count()
+        if date != today:
+            return 0
+        return int(accounts.get(userid, 0))
+    finally:
+        logged_count_lock.unlock()
+
+
+def _reserve_logged_download(userid=None):
+    """原子检查并预留一个下载名额（该账号计数+1）。超限返回 False。"""
+    if not userid:
+        return False
+    userid = str(userid)
+    logged_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, accounts = _read_logged_count()
+        if date != today:
+            accounts = {}
+        count = int(accounts.get(userid, 0))
+        if count >= LOGGED_DAILY_LIMIT:
+            return False
+        accounts[userid] = count + 1
+        _write_logged_count(today, accounts)
+        return True
+    finally:
+        logged_count_lock.unlock()
+
+
+def _release_logged_download(userid=None):
+    """下载失败时释放预留的名额（该账号计数-1）"""
+    if not userid:
+        return
+    userid = str(userid)
+    logged_count_lock.lock()
+    try:
+        today = get_current_time('%Y-%m-%d')
+        date, accounts = _read_logged_count()
+        if date == today and accounts.get(userid, 0) > 0:
+            accounts[userid] = int(accounts[userid]) - 1
+            _write_logged_count(today, accounts)
+    finally:
+        logged_count_lock.unlock()
 
 
 class BookDownload(QThread):
@@ -126,85 +290,99 @@ class BookDownload(QThread):
         self.book_hash = book['hash']
         self.book_extension = book['extension']
         self.process = 0
+        # 持有自身引用，防止队列派生时被 GC（QThread 运行中被回收会闪退），finished 后移除
+        book_download_threads.add(self)
+        self.finished.connect(lambda: book_download_threads.discard(self))
 
-    async def download_chunk(self, session, url, start, end, chunk_id, sem, history_id, process):
-        async with sem:
-            for attempt in range(99):
-                sqlite_util = SQLiteDatabase()
-                try:
-                    headers = {'Range': f'bytes={start}-{end}'}
-                    async with session.get(url, headers=headers,
-                                           timeout=aiohttp.ClientTimeout(sock_read=60 * 5)) as response:
-                        response.raise_for_status()
-                        if response.status == 206:  # 206 Partial Content
-                            # content = await response.read()
-                            file_path = os.path.join('app/chunks',
-                                                     f'{self.book_id}_{self.book_hash}_{chunk_id}.part')
-                            with open(file_path, 'wb') as f:
-                                while True:
-                                    chunk = await response.content.read(1024)
-                                    if not chunk:
-                                        break
-                                    f.write(chunk)
-                            # 更新进度
-                            self.process += process
-                            if self.process >= 100:
-                                self.process = 98
-                            sqlite_util.update_data('cmbok_download_history',
-                                                    {'process': self.process},
-                                                    {'id': history_id})
-                            book_process_signals.success.emit(history_id, self.process)
-                            break
-                except Exception as e:
-                    sqlite_util.rollback()
-                    logging.info(f'Chunk {chunk_id} error: {start}-{end}')
-                    logging.info(traceback.format_exc())
-                    logging.info(f'下载过程中出现错误: {e}')
-                    if attempt < 99 - 1:
-                        logging.info(f"正在重试... (尝试次数: {attempt + 1})")
-                        time.sleep(1)  # 等待重试
-                    else:
-                        logging.info("达到最大重试次数，下载失败。")
-                        raise e
-                finally:
-                    sqlite_util.close()
+    def _stream_download(self, ddl, headers, history_id, output_file):
+        """流式下载文件并实时更新进度，返回 'success' / 'error'"""
+        response = requests.get(ddl, headers=headers, stream=True, timeout=60)
+        response.raise_for_status()
+        total = int(response.headers.get('Content-Length', 0))
+        downloaded = 0
+        last_process = 0
+        with open(output_file, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        self.process = int(downloaded * 100 / total)
+                        if self.process >= 100:
+                            self.process = 99
+                        # 每变化 >=2% 才写库+发信号，减少开销
+                        if self.process - last_process >= 2 or self.process == 99:
+                            sqlite_util = SQLiteDatabase()
+                            try:
+                                sqlite_util.update_data('cmbok_download_history',
+                                                        {'process': self.process},
+                                                        {'id': history_id})
+                                book_process_signals.success.emit(history_id, self.process)
+                            except Exception:
+                                sqlite_util.rollback()
+                            finally:
+                                sqlite_util.close()
+                            last_process = self.process
+        return 'success'
 
-    async def download_file(self, url, total_parts, history_id, max_concurrent_chunks=5):
-        sem = asyncio.Semaphore(max_concurrent_chunks)
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            process = int(100 / len(total_parts))
-            size = math.ceil(len(total_parts) / 100)
-            for start, end, index in total_parts:
-                tasks.append(self.download_chunk(session, url, start, end, index, sem, history_id,
-                                                 (process if process > 0 else 1) if index % size == 0 else 0))
-            await asyncio.gather(*tasks)
+    def _download_file_stream(self, history_id):
+        """自有账号模式：用登录 token 获取下载链接并流式下载，每个账号每日最多10本（按 userid 计数，预留名额防竞态）"""
+        remix_userid = cfg.get(cfg.zlibrary_remix_userid)
+        remix_userkey = cfg.get(cfg.zlibrary_remix_userkey)
+        # 原子检查并预留一个名额，超限直接返回
+        if not _reserve_logged_download(remix_userid):
+            return 'no_num'
 
-            # 合并文件
-            # 定义不允许的字符
-            invalid_chars = r'[<>:"/\\|?*]'
+        Z = Zlibrary(remix_userid=remix_userid, remix_userkey=remix_userkey)
+        if not Z.isLoggedIn():
+            _release_logged_download(remix_userid)
+            return 'no_account'
 
-            # 使用正则表达式替换不允许的字符为空字符串
-            sanitized_filename = re.sub(invalid_chars, '', self.book_name)
+        allow, filename, ddl, headers = Z.getDownloadLink(self.book_id, self.book_hash)
+        if not allow or not ddl:
+            _release_logged_download(remix_userid)
+            return 'error'
 
-            output_file = os.path.join(cfg.get(cfg.downloadFolder),
-                                       f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
-            self.merge_files(total_parts, output_file)
-            self.download_success(history_id)
+        invalid_chars = r'[<>:"/\\|?*]'
+        sanitized_filename = re.sub(invalid_chars, '', self.book_name)
+        output_file = os.path.join(cfg.get(cfg.downloadFolder),
+                                   f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
+        status = self._stream_download(ddl, headers, history_id, output_file)
+        if status != 'success':
+            _release_logged_download(remix_userid)
+        return status
 
-    def merge_files(self, total_parts, output_file):
-        with open(output_file, 'wb') as merged_file:
-            for start, end, index in total_parts:
-                part_filename = os.path.join('app/chunks',
-                                             f'{self.book_id}_{self.book_hash}_{index}.part')
-                with open(part_filename, 'rb') as part_file:
-                    merged_file.write(part_file.read())
-            logging.info(f'merged {output_file} finish!!!')
+    def _download_with_builtin_account(self, history_id):
+        """内置账号模式：轮询硬编码内置账号下载，每日最多5本（持久化计数，预留名额防竞态）"""
+        # 原子检查并预留一个名额，超限直接返回
+        reserved, start = _reserve_builtin_download()
+        if not reserved:
+            return 'no_num'
 
-        for start, end, index in total_parts:
-            part_filename = os.path.join('app/chunks',
-                                         f'{self.book_id}_{self.book_hash}_{index}.part')
-            os.remove(part_filename)
+        if not BUILTIN_ACCOUNTS:
+            _release_builtin_download()
+            return 'no_account'
+
+        invalid_chars = r'[<>:"/\\|?*]'
+        sanitized_filename = re.sub(invalid_chars, '', self.book_name)
+        output_file = os.path.join(cfg.get(cfg.downloadFolder),
+                                   f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
+
+        # 按计数轮转起点，均匀分散到各账号
+        for i in range(len(BUILTIN_ACCOUNTS)):
+            account = BUILTIN_ACCOUNTS[(start + i) % len(BUILTIN_ACCOUNTS)]
+            Z = Zlibrary(email=account['email'], password=account['password'])
+            if not Z.isLoggedIn():
+                continue
+            allow, filename, ddl, headers = Z.getDownloadLink(self.book_id, self.book_hash)
+            if not allow or not ddl:
+                continue
+            status = self._stream_download(ddl, headers, history_id, output_file)
+            if status == 'success':
+                return 'success'  # 成功，保留预留名额
+        # 所有账号都失败，释放预留名额
+        _release_builtin_download()
+        return 'no_account'
 
     def download_success(self, history_id):
         global book_active_downloads
@@ -244,7 +422,7 @@ class BookDownload(QThread):
 
         try:
             self.success.emit('success')
-            # 先保存保存下载记录
+            # 先保存下载记录
             history_id = sqlite_util.insert_data('cmbok_download_history', {'cover': '',
                                                                             'name': self.book_name,
                                                                             'author': self.book_author,
@@ -261,44 +439,25 @@ class BookDownload(QThread):
                                         {'status': 1, 'start_time': get_current_time()},
                                         {'id': history_id})
 
-                url = f'{CMBOK_WEBSITE}cmbok/zlibrary/download/{self.book_id}/{self.book_hash}/{self.book_extension}'
-                response = requests.get(url)
-                response.raise_for_status()
-                if response.status_code == 200:
-                    results = response.json()
-                    download_status = results['download_status']
-                    if download_status == 'success':
-                        file_name = f'{self.book_id}_{self.book_hash}.{self.book_extension}'
-                        # 先获取文件大小
-                        head = requests.head(f'{CMBOK_WEBSITE}static/files/{file_name}')
+                # 本地直连 z-library 下载（按模式切换）
+                if cfg.get(cfg.use_zlibrary_builtin_account):
+                    download_status = self._download_with_builtin_account(history_id)
+                else:
+                    download_status = self._download_file_stream(history_id)
+                if download_status == 'success':
+                    self.download_success(history_id)
+                else:
+                    self.download_fail(download_status, history_id)
 
-                        if head.status_code == 200:
-                            file_size = int(head.headers.get('Content-Length'))
-                            chunk_size = 1024 * 1024  # 每个块1MB
-                            # 计算块的数量
-                            chunks = [(i, min(i + chunk_size - 1, file_size - 1), index)
-                                      for index, i in enumerate(range(0, file_size, chunk_size))]
-                            # 下载每个块
-                            url = f'{CMBOK_WEBSITE}cmbok/zlibrary/download_file/{self.book_id}/{self.book_hash}/{self.book_extension}'
-
-                            os.makedirs('app/chunks', exist_ok=True)
-
-                            asyncio.run(self.download_file(url, chunks, history_id, max_concurrent_chunks=10))
-                        else:
-                            self.download_fail('error', history_id)
-                    else:
-                        self.download_fail(download_status, history_id)
-
-                    # 继续下一个等待的下载任务（如果有的话）
-                    if not book_waiting_queue.empty():
-                        next_book = book_waiting_queue.get()
-                        bookDownload = BookDownload(book=next_book)
-                        bookDownload.start()
+                # 继续下一个等待的下载任务（如果有的话）
+                if not book_waiting_queue.empty():
+                    next_book = book_waiting_queue.get()
+                    bookDownload = BookDownload(book=next_book)
+                    bookDownload.start()
             else:
                 book_waiting_queue.put(self.book)
         except Exception:
             sqlite_util.rollback()
-            delete_files_with_character('app/chunks', f'{self.book_id}_{self.book_hash}')
             self.download_fail('error', history_id)
             # 继续下一个等待的下载任务（如果有的话）
             if not book_waiting_queue.empty():
@@ -327,7 +486,7 @@ class ComicSearch(QThread):
     def run(self):
         comic_search_lock.lock()
         try:
-            url = f"{URL}api/v3/search/comic?format=json&platform=3&q={self.comic_name}&limit=27&offset={self.offset * 27}"
+            url = f"{cfg.get(cfg.copy_url)}api/v3/search/comic?format=json&platform=1&q={self.comic_name}&limit=27&offset={self.offset * 27}"
             api_client = create_api_client()
             response = api_client("GET", url)
             if response.status_code == 200:
@@ -358,7 +517,7 @@ class ComicGroups(QThread):
 
     def run(self):
         try:
-            url = f"{URL}api/v3/comic2/{self.path_word}"
+            url = f"{cfg.get(cfg.copy_url)}api/v3/comic2/{self.path_word}"
             api_client = create_api_client()
             response = api_client("GET", url)
             if response.status_code == 200:
@@ -393,7 +552,7 @@ class ComicChapters(QThread):
         offset = 0
         try:
             while offset < self.group_count:
-                url = f"{URL}api/v3/comic/{self.comic_path_word}/group/{self.group_path_word}/chapters?limit={limit}&offset={offset}"
+                url = f"{cfg.get(cfg.copy_url)}api/v3/comic/{self.comic_path_word}/group/{self.group_path_word}/chapters?limit={limit}&offset={offset}"
                 api_client = create_api_client()
                 response = api_client("GET", url)
                 if response.status_code == 200:
@@ -505,8 +664,9 @@ class ComicDownload(QThread):
         try:
             filename = filename.replace('/', '')
             if not os.path.exists(os.path.join(save_path, filename)):
+                proxy = (cfg.get(cfg.copy_proxy) or '').strip() or None
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_read=20)) as session:
-                    async with session.get(url) as response:
+                    async with session.get(url, proxy=proxy) as response:
                         response.raise_for_status()  # 抛出HTTP错误
                         if response.status == 200:
                             image_data = await response.read()
@@ -714,30 +874,153 @@ class ComicDownload(QThread):
         logging.info(f'{comic_name}{chapter_name}转换epub完成')
 
     def get_chapter_images(self, comic_path_word, chapter_id):
-        try:
-            url = f"{URL}/api/v3/comic/{comic_path_word}/chapter/{chapter_id}"
-            api_client = create_api_client()
-            response = api_client("GET", url)
-            if response.status_code == 200:
-                data = json.loads(response.text)
-                results = data['results']['chapter']['contents']
-                return [i['url'] for i in results]
-            else:
-                return None
-        except Exception as e:
-            logging.info('获取图片失败')
+        # 热辣线路用 chapter，copy 线路用 chapter2；两者回退（参考 Breeze 插件）
+        for path in ('chapter', 'chapter2'):
+            try:
+                url = f"{cfg.get(cfg.copy_url)}api/v3/comic/{comic_path_word}/{path}/{chapter_id}"
+                api_client = create_api_client()
+                response = api_client("GET", url)
+                if response.status_code == 200:
+                    data = json.loads(response.text)
+                    contents = data.get('results', {}).get('chapter', {}).get('contents')
+                    if contents:
+                        return [i['url'] for i in contents]
+            except Exception:
+                logging.info(traceback.format_exc())
+                logging.info('获取图片失败')
+        return None
 
 
 # 漫画站点——获取漫画目录下所有图片
 
+class WebsiteChapterFetchThread(QThread):
+    """漫画站点章节取图（直连模式，use_frame=0）
+
+    对应油猴脚本 getImage 的 useFrame:false 分支：直接 requests 请求章节页 HTML，
+    用 BeautifulSoup 按 img_dom 选择器限定范围提取图片地址，并跟随"下一页"链接合并多页图片。
+    """
+    success = pyqtSignal(str, str, list, str)
+
+    def __init__(self, comic_name, chapter_name, url, img_dom, img_attr, parent=None):
+        super(WebsiteChapterFetchThread, self).__init__(parent)
+        self.comic_name = comic_name
+        self.chapter_name = chapter_name
+        self.url = url
+        self.img_dom = (img_dom or '').strip()
+        self.img_attr = (img_attr or '').strip()
+
+    def run(self):
+        try:
+            if 'zaimanhua.com' in self.url:
+                # 再漫画：阅读器为 Nuxt SPA，直连章节接口取 page_url
+                imgs = self._fetch_zaimanhua_api()
+            else:
+                imgs = self._fetch_all_pages()
+            # 去重保序
+            seen = set()
+            out = []
+            for u in imgs:
+                if u and u not in seen:
+                    seen.add(u)
+                    out.append(u)
+            logging.info(f'[站点下载] 直连取图完成: {len(out)} 张 | 章节: {self.chapter_name}')
+            self.success.emit(self.comic_name, self.chapter_name, out, self.url)
+        except Exception:
+            logging.info(traceback.format_exc())
+            self.success.emit(self.comic_name, self.chapter_name, [], self.url)
+
+    def _fetch_zaimanhua_api(self):
+        # 再漫画阅读器是 Nuxt SPA，图片由接口返回；章节URL: /view/<slug>/<comic_id>/<chapter_id>
+        m = re.search(r'/view/[^/]+/(\d+)/(\d+)', self.url)
+        if not m:
+            logging.info(f'[站点下载] 再漫画URL无法解析章节号: {self.url}')
+            return []
+        comic_id, chapter_id = m.group(1), m.group(2)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': self.url,
+        }
+        api = self._origin() + 'api/v1/comic2/chapter/detail'
+        resp = requests.get(api, headers=headers, params={'chapter_id': chapter_id, 'comic_id': comic_id}, timeout=20)
+        data = resp.json() or {}
+        if data.get('errno') != 0:
+            logging.info(f'[站点下载] 再漫画接口返回错误: {data.get("errmsg")} | comic_id={comic_id} chapter_id={chapter_id}')
+            return []
+        page_url = ((data.get('data') or {}).get('chapterInfo') or {}).get('page_url') or []
+        logging.info(f'[站点下载] 再漫画接口取图: {len(page_url)} 张 | chapter_id={chapter_id}')
+        return page_url
+
+    def _fetch_all_pages(self):
+        from urllib.parse import urljoin
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': self._origin(),
+        }
+        imgs = []
+        url = self.url
+        visited = set()
+        for _ in range(8):
+            if not url or url in visited:
+                break
+            visited.add(url)
+            resp = requests.get(url, headers=headers, timeout=20)
+            html = resp.text or ''
+            imgs.extend(self._extract_imgs(html))
+            # 跟随"下一页"链接（包子漫画 next_chapter 形式）
+            m = re.search(r'next_chapter"[^>]*?href="([^"]+)"', html)
+            if m:
+                url = urljoin(url, m.group(1))
+            else:
+                break
+        return imgs
+
+    def _extract_imgs(self, html):
+        if not html:
+            return []
+        from bs4 import BeautifulSoup
+        try:
+            soup = BeautifulSoup(html, 'lxml')
+        except Exception:
+            soup = BeautifulSoup(html, 'html.parser')
+        # 按 img_dom 选择器限定范围（如 #_imageList img），未配置则取全部 img
+        if self.img_dom:
+            nodes = soup.select(self.img_dom)
+        else:
+            nodes = soup.find_all('img')
+        found = []
+        for node in nodes:
+            if self.img_attr:
+                # 按配置属性名取（如 data-url、data-original），取不到回退 src
+                src = node.get(self.img_attr) or node.get('src')
+            else:
+                # 未配置属性时取 src（对标油猴脚本包子漫画 <img.*src 逻辑，避免误取懒加载占位图）
+                src = node.get('src')
+            if src:
+                found.append(src)
+        # 过滤图标/占位/加载图
+        bad = ('logo', 'data:image', 'blank', 'placeholder', 'loading.gif', 'load.gif', 'favicon')
+        return [u for u in found if not any(b in u.lower() for b in bad)]
+
+    def _origin(self):
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(self.url)
+            return f'{p.scheme}://{p.netloc}/'
+        except Exception:
+            return ''
+
+
 class ComicWebsiteChapterImages(QThread):
     success = pyqtSignal(object)
 
-    def __init__(self, comic_name, chapter_name, chapter_images):
+    def __init__(self, comic_name, chapter_name, chapter_images, referer=''):
         super(ComicWebsiteChapterImages, self).__init__()
         self.comic_name = comic_name
         self.chapter_images = chapter_images
         self.chapter_name = chapter_name
+        self.referer = referer or ''
 
     def run(self):
         try:
@@ -748,28 +1031,41 @@ class ComicWebsiteChapterImages(QThread):
             logging.info(traceback.format_exc())
             logging.info('下载所有图片失败')
 
-    # 下载单个图片的异步函数
+    # 下载单个图片的异步函数（失败重试 3 次）
     async def async_download_image(self, url, save_path, filename):
-        # 保存图片，文件名可根据需要修改
-        try:
-            filename = filename.replace('/', '')
-            # 设置请求头
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-            }
-            if not os.path.exists(os.path.join(save_path, filename)):
-                async with httpx.AsyncClient(timeout=20) as client:
+        filename = filename.replace('/', '')
+        target = os.path.join(save_path, filename)
+        if os.path.exists(target):
+            return
+        # 完整浏览器请求头，避免 Cloudflare 等 bot 检测返回 403
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                          "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Sec-Fetch-Dest": "image",
+            "Sec-Fetch-Mode": "no-cors",
+            "Sec-Fetch-Site": "cross-site",
+            "sec-ch-ua": '"Google Chrome";v="120", "Chromium";v="120", "Not.A/Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Referer": self.referer or 'https://www.google.com/',
+        }
+        last_err = ''
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
                     response = await client.get(url, headers=headers)
-                    # 检查请求是否成功
                     if response.status_code == 200:
-                        with open(os.path.join(save_path, filename), 'wb') as file:
+                        with open(target, 'wb') as file:
                             file.write(response.content)
-                    else:
-                        logging.info(f"Failed to download {url}")
-        except Exception as e:
-            logging.info(traceback.format_exc())
-            logging.info(f'图片url：{url}，图片名称：{filename}')
-            logging.info('下载图片异常')
+                        return
+                    last_err = f'status={response.status_code}'
+            except Exception as e:
+                last_err = str(e)
+            # 失败后退避重试
+            await asyncio.sleep(1 + attempt)
+        logging.info(f'图片下载失败(重试3次): {url} | {last_err}')
 
     async def download_chapter_images(self, image_urls, comic_name, chapter_name):
         logging.info(f'{comic_name}{chapter_name}图片开始下载')
@@ -807,7 +1103,8 @@ class EpubThread(QThread):
     # 生成epub
     def images_to_epub(self, download_folder, comic_name):
         try:
-            for entry in os.listdir(download_folder):
+            # 顶层目录（卷/章节）按自然排序，确保按章节顺序生成
+            for entry in natsorted(os.listdir(download_folder)):
                 path = os.path.join(download_folder, entry)
                 if os.path.isdir(path):  # 检查是否为目录
                     chapter_name = entry

@@ -1,56 +1,79 @@
-import datetime
-import random
+import logging
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from common.config import cfg
+
+# 热辣漫画线路（Origin/version/region/webp 与 copy 线路不同，参考 Breeze 插件）
+_HOTMANGA_HOSTS = {
+    'api.manga2025.com', 'mapi.hotmangasd.com', 'mapi.hotmangasf.com', 'mapi.hotmangasg.com',
+    'mapi.elfgjfghkk.club', 'mapi.fgjfghkk.club', 'mapi.fgjfghkkcenter.club',
+}
+# 浏览器 UA（不能用 COPY/x.x.x，否则触发"破解版"风控 210）
+_BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+
+def _is_hotmanga(url):
+    host = (urlparse(url).hostname or '').lower()
+    return host in _HOTMANGA_HOSTS or 'hotmanga' in host or 'fgjfghkk' in host
+
+
+def _headers_for(url):
+    """按 Breeze 插件 getApiHeaders 构造请求头（浏览器风，避免破解版风控）"""
+    is_hot = _is_hotmanga(url)
+    headers = {
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7",
+        "version": "2025.02.12" if is_hot else "2025.05.09",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1",
+        "User-Agent": _BROWSER_UA,
+        "platform": "1",
+        "Origin": "https://m.relamanhua.org" if is_hot else "https://2025copy.com",
+        "webp": "1" if is_hot else "0",
+    }
+    if not is_hot:
+        headers["region"] = "0"
+    # authorization token 用户可选（留空匿名访问）
+    token = (cfg.get(cfg.copy_token) or '').strip()
+    if token:
+        headers["authorization"] = f"Token {token}"
+    return headers
+
 
 def create_api_client():
-    # 定义重试策略
+    # 重试策略
     retry_strategy = Retry(
-        total=3,  # 最大重试次数
-        backoff_factor=1,  # 初始等待时间为1秒（指数退避）
-        status_forcelist=[429, 500, 502, 503, 504],  # 这些状态码会触发重试
+        total=3,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504],
         raise_on_status=False,
-        # 你可以加入其他参数，如RespectRetryAfterHeader=True
     )
 
-    # 创建一个会话对象
     session = requests.Session()
 
-    # 设置默认请求头
-    headers = {
-        "User-Agent": "COPY/2.3.0",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip",
-        "source": "copyApp",
-        "deviceinfo": "DCO-AL00-DCO-AL00",
-        "webp": "1",
-        "platform": "3",
-        "referer": "com.copymanga.app-2.3.0",
-        "authorization": random.choice(
-            ['30f97499a1b77eb8fb3f5c717ae1a96f1470b91c', 'd5ef3229d1a6e0ff3acd00a6d42b85d8a25641a3',
-             'a65a03aaef34cdc33cfdc95cef6fb897a7156bb6', 'b551ec288beac86aff02cb5a01a9063c46b2f53a',
-             'bd494a59cd20ebf64e7c18aee39e3d813ffd3354']),  # 请根据实际需求填写Token
-        "version": "2.3.0",
-        "region": "1",
-        "device": "V417IR",
-        "umstring": "d8c31fb914fe4e3c9a8fe6eaadc641bc",
-        "dt": datetime.datetime.now().strftime("%Y.%m.%d")
-    }
-    session.headers.update(headers)
+    # 可选代理（梯子本地端口）；留空=直连，适合 TUN 模式全局路由
+    proxy = (cfg.get(cfg.copy_proxy) or '').strip()
+    if proxy:
+        session.proxies = {'http': proxy, 'https': proxy}
 
-    # 配置适配器，绑定重试策略
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    # 设置默认超时（请注意，requests自身没有会话级别超时参数，这需要在每次请求时指定）
-    # 这里我们可以封装请求函数，自动加入超时
     def request_with_timeout(method, url, **kwargs):
-        timeout = 5  # 秒
-        return session.request(method, url, timeout=timeout, **kwargs)
+        timeout = 10  # 秒
+        # 每次请求按域名动态构造请求头（热辣/copy 线路不同）
+        headers = _headers_for(url)
+        extra = kwargs.pop('headers', None) or {}
+        headers.update(extra)
+        return session.request(method, url, timeout=timeout, headers=headers, **kwargs)
 
-    # 返回一个函数包装的会话
     return request_with_timeout
