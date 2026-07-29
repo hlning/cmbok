@@ -845,8 +845,9 @@ class ComicDownload(QThread):
                     img_to_pdf(sorted_files, path, f'{save_path}/{comic_name}_{chapter_name}.pdf')
                 # 转mobi，需要配置ebook-convert
                 calibrePath = cfg.get(cfg.calibrePath)
+                calibre_bin = 'ebook-convert.exe' if os.name == 'nt' else 'ebook-convert'
                 if calibrePath != '' and os.path.isfile(calibrePath) and os.path.basename(
-                        calibrePath) == 'ebook-convert.exe':
+                        calibrePath) == calibre_bin:
                     convert_epub_to_mobi(calibrePath, cfg.get(cfg.calibreOutputDevice),
                                          f'{comic_name}_{chapter_name}', f'{save_path}/{comic_name}_{chapter_name}.pdf',
                                          f'{save_path}/{comic_name}_{chapter_name}.mobi')
@@ -1158,8 +1159,9 @@ class EpubThread(QThread):
                             img_to_pdf(sorted_files, path, f'{save_path}/{comic_name}_{chapter_name}.pdf')
                         # 转mobi，需要配置ebook-convert
                         calibrePath = cfg.get(cfg.calibrePath)
+                        calibre_bin = 'ebook-convert.exe' if os.name == 'nt' else 'ebook-convert'
                         if calibrePath != '' and os.path.isfile(calibrePath) and os.path.basename(
-                                calibrePath) == 'ebook-convert.exe':
+                                calibrePath) == calibre_bin:
                             convert_epub_to_mobi(calibrePath, cfg.get(cfg.calibreOutputDevice),
                                                  f'{comic_name}_{chapter_name}',
                                                  f'{save_path}/{comic_name}_{chapter_name}.pdf',

@@ -16,16 +16,24 @@ def start_komga():
         is_run = komga_is_run()
         if not is_run:
             komga_dir = cfg.get(cfg.komgaFolder)
-            java_bin = "java.exe" if os.name == "nt" else "java"
-            jre_path = os.path.join(komga_dir, "jre", "bin", java_bin)
             jar_path = os.path.join(komga_dir, "komga-1.21.2.jar")
-
-            process = subprocess.Popen(
-                [jre_path, "-jar", jar_path],
-                creationflags=subprocess.CREATE_NO_WINDOW,
+            popen_kwargs = dict(
                 stdout=subprocess.PIPE,  # 可选：捕获输出
                 stderr=subprocess.PIPE,  # 可选：捕获错误
                 start_new_session=True,  # 防止子进程随主进程退出
+            )
+            if os.name == "nt":
+                # Windows：用内置 JRE，隐藏控制台窗口
+                java_bin = "java.exe"
+                jre_path = os.path.join(komga_dir, "jre", "bin", java_bin)
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            else:
+                # macOS/Linux：用系统 java（需 brew install openjdk），内置 JRE 不可跨平台
+                jre_path = "java"
+
+            process = subprocess.Popen(
+                [jre_path, "-jar", jar_path],
+                **popen_kwargs,
             )
             logging.info(f'kmoga启动成功，PID: {process.pid}')
     except Exception:

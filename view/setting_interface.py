@@ -154,7 +154,7 @@ class SettingInterface(ScrollArea):
         self.calibrePathCard = PushSettingCard(
             '选择文件',
             FIF.TILES,
-            'ebook-convert.exe路径，如果开启转换Mobi，需要先安装Calibre',
+            'ebook-convert 路径（Windows 为 ebook-convert.exe），开启转换Mobi需先安装Calibre',
             cfg.get(cfg.calibrePath),
             self.comicSettingGroup
         )

@@ -1,0 +1,52 @@
+name: Build macOS
+
+# 触发方式：手动（Actions -> Build macOS -> Run workflow）或打 v 开头 tag 自动触发
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: macos-latest  # arm64（M1/M2/M3）。要 Intel 包改成 macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install PyQt5 PyQt-Fluent-Widgets PyQtWebEngine requests aiohttp httpx \
+              beautifulsoup4 lxml pillow PyMuPDF ebooklib natsort psutil pypandoc \
+              pdf2docx reportlab pycryptodome pyinstaller
+
+      - name: Generate .icns icon
+        run: |
+          mkdir -p logo.iconset
+          sips -z 16 16   resource/images/logo.png --out logo.iconset/icon_16x16.png
+          sips -z 32 32   resource/images/logo.png --out logo.iconset/icon_16x16@2x.png
+          sips -z 32 32   resource/images/logo.png --out logo.iconset/icon_32x32.png
+          sips -z 64 64   resource/images/logo.png --out logo.iconset/icon_32x32@2x.png
+          sips -z 128 128 resource/images/logo.png --out logo.iconset/icon_128x128.png
+          sips -z 256 256 resource/images/logo.png --out logo.iconset/icon_128x128@2x.png
+          sips -z 256 256 resource/images/logo.png --out logo.iconset/icon_256x256.png
+          sips -z 512 512 resource/images/logo.png --out logo.iconset/icon_256x256@2x.png
+          sips -z 512 512 resource/images/logo.png --out logo.iconset/icon_512x512.png
+          cp resource/images/logo.png logo.iconset/icon_512x512@2x.png
+          iconutil -c icns logo.iconset -o resource/images/logo.icns
+
+      - name: Compile qrc
+        run: pyrcc5 resource/resource.qrc -o resource_rc.py
+
+      - name: Build with PyInstaller
+        run: pyinstaller cmbok_mac.spec --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmbok-mac
+          path: dist/cmbok.app
