@@ -27,7 +27,7 @@
 
 Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在多个站点的资源检索、下载、格式转换、本地书库管理整合为一个流畅的桌面应用，专注内容本身。
 
-<img width="1617" height="1424" alt="image" src="https://github.com/user-attachments/assets/d66eb51c-c416-464c-83d0-e9cc32b3081e" />
+<img width="1821" height="1509" alt="image" src="https://github.com/user-attachments/assets/02c50fa4-a73e-4838-bef9-db058be9f7b9" />
 
 ### 核心能力一览
 
@@ -73,11 +73,11 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 - 下载目录：`下载目录/漫画名/章节名/`，图片打包为 EPUB。
 - 并发受「下载最大线程」设置约束，避免触发风控。
 
-<img width="1618" height="1424" alt="image" src="https://github.com/user-attachments/assets/7e1fbcda-b523-415e-a631-68ed82f2340a" />
+<img width="1821" height="1509" alt="image" src="https://github.com/user-attachments/assets/98d396ad-54dc-48db-9a29-9c1d3063b97e" />
 
 > 图片说明：漫画搜索结果页，每行 3 个卡片，含封面缩略图、名称、作者及收藏/获取章节按钮。
 
-<img width="1619" height="1424" alt="image" src="https://github.com/user-attachments/assets/c70b327a-461f-40c1-9a2e-014bedd6a7fa" />
+<img width="1823" height="1509" alt="image" src="https://github.com/user-attachments/assets/0018d6ca-8a82-477d-b494-7af901b3ec91" />
 
 > 图片说明：章节列表弹窗，可勾选多个章节批量下载。
 
@@ -108,11 +108,11 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 
 > ℹ️ **额度说明**：每个登录账号独立计算 10 本/日额度，互不影响；内置账号全局共享 5 本/日，跨日自动重置。
 
-<img width="1620" height="1424" alt="image" src="https://github.com/user-attachments/assets/32018ccb-bd8b-4325-b66c-e80f733599bc" />
+<img width="1820" height="1509" alt="image" src="https://github.com/user-attachments/assets/f2b4fbdc-c7ca-4082-967f-3914380dee29" />
 
 > 图片说明：左下角头像区域，展开导航时两行显示：用户名 + 当日下载计数/额度。
 
-<img width="1618" height="1424" alt="image" src="https://github.com/user-attachments/assets/acbe1c1c-a49a-407b-9c51-63057a97caa2" />
+<img width="1820" height="1509" alt="image" src="https://github.com/user-attachments/assets/84336d47-5a7c-4e24-b357-19239ce47c55" />
 
 > 图片说明：图书搜索界面，顶部为搜索框+重置按钮，下方为精确搜索条件（起止年份/语言/格式），结果卡片含封面与下载按钮。
 
@@ -145,7 +145,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 
 > ℹ️ 普通站点走直连解析；需要 JS 渲染的站点可启用 iframe 模式。
 
-<img width="1616" height="1424" alt="image" src="https://github.com/user-attachments/assets/139b7e65-00ab-4544-ad63-261259f9f478" />
+<img width="1821" height="1509" alt="image" src="https://github.com/user-attachments/assets/c14e6ed4-930c-4389-8f24-ec8fec9ed747" />
 
 > 图片说明：站点卡片网格，每行 3 个，含站点图标、名称、编辑/删除按钮，右上角新增站点按钮。
 
@@ -168,7 +168,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 | Ctrl+V | 粘贴 |
 | Delete | 删除 |
 
-<img width="1616" height="1424" alt="image" src="https://github.com/user-attachments/assets/7544480d-da24-43ba-8603-bc74f63c47d6" />
+<img width="1824" height="1509" alt="image" src="https://github.com/user-attachments/assets/29078469-c3f5-4ce4-917c-c63e2dada6c1" />
 
 > 图片说明：文件管理界面，左侧树形目录，右侧文件列表，表头含名称/大小/类型/修改时间。
 
@@ -188,7 +188,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 
 > ℹ️ 收藏数据存于本地数据库，不随下载删除而丢失。
 
-<img width="1617" height="1424" alt="image" src="https://github.com/user-attachments/assets/e4ac82ba-c651-410b-970d-843264873170" />
+<img width="1818" height="1509" alt="image" src="https://github.com/user-attachments/assets/af9801a6-f286-487a-abb2-01931d3fd7d3" />
 
 > 图片说明：收藏界面，顶部搜索框+面包屑导航，卡片网格每行 2 个，含封面与操作按钮。
 
@@ -216,7 +216,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 | 软件退出       | 任务被中断           |
 | 转换 epub 失败 | 打包失败            |
 
-<img width="1622" height="1424" alt="image" src="https://github.com/user-attachments/assets/90404bff-8a08-46e1-9f85-3ecfbc25e73b" />
+<img width="1821" height="1509" alt="image" src="https://github.com/user-attachments/assets/4ad548a0-2579-4840-80bb-7eb39644e9d9" />
 
 > 图片说明：下载管理界面，顶部漫画/图书标签切换，表格含进度环与彩色状态文字，底部为分页栏。
 
@@ -231,6 +231,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 | 合并 PDF | PDF/DOCX/MOBI/EPUB/FB2/CBZ/SVG/TXT/图片 | 单个 PDF |
 | 转 EPUB | PDF/DOCX/MOBI/FB2/CBZ/SVG/TXT/图片      | EPUB   |
 | 转 DOC  | PDF/MOBI/EPUB/FB2/CBZ/SVG/TXT/图片      | DOC    |
+| 合并 EPUB  | EPUB/DOCX/TXT/MD/HTML/RTF      | EPUB    |
 
 **操作步骤：**
 
@@ -240,9 +241,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 4. 点击转换 -> 等待完成（转换中程序可能短暂无响应，属正常）。
 5. 完成后可选「打开文件夹」直接定位产物。
 
-> ⚠️ 大文件转换耗时，请耐心等待进度提示。
-
-<img width="1617" height="1424" alt="image" src="https://github.com/user-attachments/assets/940b4df9-de1a-4f1f-b160-b15bc0bb6392" />
+<img width="1823" height="1509" alt="image" src="https://github.com/user-attachments/assets/353dc80e-6006-4e17-a2b6-71d1ee7898cb" />
 
 > 工具箱界面，4 个卡片（转PDF/合并PDF/转EPUB/转DOC）排布，点击弹出转换对话框。
 
@@ -290,6 +289,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 | ------------- | ---------------- | -- |
 | 软件启动时运行 Komga | 随软件启动            | 开  |
 | Komga 保留后台    | 退出软件后 Komga 继续运行 | 关  |
+| Komga自定义地址    | 未配置(使用内置Komga，菜单打开127.0.0.1:25600) | 默认地址空  |
 
 ### 4.3 漫画设置
 
@@ -327,7 +327,7 @@ Cmbok 是一款「一站式」漫画/图书获取与管理工具，把分散在�
 
 > ℹ️ 主题与缩放切换后需重启生效；毛玻璃与导航展开可即时切换。手动展开/折叠导航栏后，设置会自动同步记忆。
 
-<img width="1619" height="1424" alt="image" src="https://github.com/user-attachments/assets/75717767-2bb7-4b4c-b3c9-2bf5a87aea69" />
+<img width="1821" height="1509" alt="image" src="https://github.com/user-attachments/assets/7652c129-d1e8-4c8d-9b17-53cc67804ad1" />
 
 > 图片说明：设置界面分组展示，包含使用设置/Komga/漫画/站点/图书/个性化/软件更新/关于等分组。
 
