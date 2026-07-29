@@ -1,24 +1,32 @@
 # coding:utf-8
 from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtGui import QDesktopServices, QPainter, QColor, QPainterPath
 from PyQt5.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget, QHBoxLayout
-from qfluentwidgets import IconWidget, TextWrap, SingleDirectionScrollArea
+from qfluentwidgets import IconWidget, TextWrap, SingleDirectionScrollArea, ElevatedCardWidget, isDarkTheme
 
 from common.style_sheet import StyleSheet
 
 
-class LinkCard(QFrame):
+class LinkCard(ElevatedCardWidget):
 
     def __init__(self, icon, title, content, url, parent=None):
         super().__init__(parent=parent)
         self.url = QUrl(url)
-        self.setFixedHeight(270)
+        self.setMinimumHeight(250)
         self.iconWidget = IconWidget(icon, self)
         self.titleLabel = QLabel(title, self)
-        self.contentLabel = QLabel(TextWrap.wrap(content, 28, False)[0], self)
-        # self.urlWidget = IconWidget(FluentIcon.DOWNLOAD, self)
+        self.contentLabel = QLabel(content, self)
+        self.contentLabel.setWordWrap(True)
 
         self.__initWidget()
+
+    # 正常态背景色
+    def _normalBackgroundColor(self):
+        return QColor(248, 248, 248) if not isDarkTheme() else QColor(45, 45, 45)
+
+    # 悬停态背景色
+    def _hoverBackgroundColor(self):
+        return QColor(248, 248, 248) if not isDarkTheme() else QColor(50, 50, 50)
 
     def __initWidget(self):
         self.setCursor(Qt.PointingHandCursor)
@@ -27,22 +35,76 @@ class LinkCard(QFrame):
 
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setSpacing(0)
-        self.vBoxLayout.setContentsMargins(15, 24, 0, 13)
-        self.vBoxLayout.addWidget(self.iconWidget)
-        self.vBoxLayout.addSpacing(16)
+        self.vBoxLayout.setContentsMargins(15, 24, 15, 13)
+        # 图片、漫画名、漫画介绍居中显示
+        self.vBoxLayout.addWidget(self.iconWidget, 0, Qt.AlignHCenter)
+        self.vBoxLayout.addSpacing(30)
+        self.titleLabel.setAlignment(Qt.AlignHCenter)
         self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addSpacing(8)
+        self.contentLabel.setAlignment(Qt.AlignHCenter)
         self.vBoxLayout.addWidget(self.contentLabel)
-        self.vBoxLayout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        # self.urlWidget.setFixedSize(16, 16)
-        # self.urlWidget.move(170, 230)
+        self.vBoxLayout.setAlignment(Qt.AlignVCenter)
 
         self.titleLabel.setObjectName('titleLabel')
         self.contentLabel.setObjectName('contentLabel')
 
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._adjustCoverSize()
+
+    # 封面随卡片宽度等比缩放（保持 180:80 比例）
+    def _adjustCoverSize(self):
+        lm = self.vBoxLayout.contentsMargins()
+        w = self.width() - lm.left() - lm.right()
+        if w <= 0:
+            return
+        cover_h = int(w * 80 / 180)
+        self.iconWidget.setFixedSize(w, cover_h)
+
+    def paintEvent(self, e):
+        # 卡片顶部圆角、底部直角；边框只画上、左、右三边（去掉下边框）
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.Antialiasing)
+
+        w, h = self.width(), self.height()
+        r = self.borderRadius
+        d = 2 * r
+
+        # 背景：上圆角、下直角
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(self.backgroundColor)
+        bg = QPainterPath()
+        bg.moveTo(1, r)
+        bg.arcTo(1, 1, d, d, -180, -90)
+        bg.lineTo(w - r, 1)
+        bg.arcTo(w - d - 1, 1, d, d, 90, -90)
+        bg.lineTo(w - 1, h - 1)
+        bg.lineTo(1, h - 1)
+        bg.closeSubpath()
+        painter.drawPath(bg)
+
+        # 边框：只画上、左、右三边（底部直角，不画下边框）
+        painter.setPen(QColor(0, 0, 0, 48) if isDarkTheme() else QColor(0, 0, 0, 12))
+        painter.setBrush(Qt.NoBrush)
+        path = QPainterPath()
+        path.moveTo(1, h - 1)
+        path.lineTo(1, r)
+        path.arcTo(1, 1, d, d, -180, -90)
+        path.lineTo(w - r, 1)
+        path.arcTo(w - d - 1, 1, d, d, 90, -90)
+        path.lineTo(w - 1, h - 1)
+        painter.drawPath(path)
+
     def mouseReleaseEvent(self, e):
         super().mouseReleaseEvent(e)
         QDesktopServices.openUrl(self.url)
+
+    def _startElevateAni(self, start, end):
+        # 禁用 ElevatedCardWidget 的位移抬起动画：启动时若鼠标已悬停于卡片上，
+        # enterEvent 会把未就绪的 pos 记为 _originalPos，离开后恢复到错误位置，
+        # 造成卡片重叠且无法复原。保留 hover 背景色与阴影变化，仅取消位移。
+        pass
 
 
 class LinkCardView(SingleDirectionScrollArea):

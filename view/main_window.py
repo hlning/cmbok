@@ -99,6 +99,9 @@ class Window(FluentWindow):
 
     # 运行komga
     def run_komga(self):
+        # 配置了自定义 Komga 地址则不启动内置 Komga
+        if cfg.get(cfg.customKomgaUrl):
+            return
         if cfg.get(cfg.isRunKomga):
             start_komga()
 
@@ -138,6 +141,11 @@ class Window(FluentWindow):
 
     # 监听侧边栏改变事件
     def on_navigation_changed(self, index):
+        if index == 0:
+            # 切回漫画搜索：重排卡片宽度自适应（窗口宽度可能已在其他界面变化）
+            QTimer.singleShot(0, self.comicInterface.refreshCards)
+        if index == 1:
+            QTimer.singleShot(0, self.bookInterface.refreshCards)
         if index == 2:
             # 默认更新站点记录
             self.websiteInterface.updateWebsiteRecords(1)
@@ -150,6 +158,7 @@ class Window(FluentWindow):
             # 默认更新下载记录
             self.downloadInterface.updateComicRecords(1)
             self.downloadInterface.updateComicRecords(2)
+            QTimer.singleShot(0, self.downloadInterface.refreshTableSize)
 
     # 初始化侧边栏
     def initNavigation(self):
@@ -213,7 +222,10 @@ class Window(FluentWindow):
         self._refreshAvatarDisplay()
 
     def onKomga(self):
-        QDesktopServices.openUrl(QUrl('http://127.0.0.1:25600/'))
+        # 配置了自定义地址则打开自定义地址，否则打开内置 Komga
+        custom = cfg.get(cfg.customKomgaUrl)
+        url = custom if custom else 'http://127.0.0.1:25600/'
+        QDesktopServices.openUrl(QUrl(url))
 
     # 主题切换图标：明亮模式显示月亮，暗黑模式显示太阳
     def _themeIcon(self):
@@ -341,6 +353,9 @@ class Window(FluentWindow):
     def _onNavigationDisplayChanged(self, mode):
         is_expanded = mode in (NavigationDisplayMode.MENU, NavigationDisplayMode.EXPAND)
         cfg.set(cfg.navigationExpanded, is_expanded)
+        # 导航展开/收缩改变内容区宽度，立即+动画结束后刷新下载表格列宽自适应
+        QTimer.singleShot(0, self.downloadInterface.refreshTableSize)
+        QTimer.singleShot(400, self.downloadInterface.refreshTableSize)
 
     # 头像图标：未登录用 no-login 黑/白变体随主题切换，已登录用 login.png
     def _avatarImage(self, logged_in):
@@ -376,8 +391,6 @@ class Window(FluentWindow):
         logging.info("应用程序启动")
 
     def closeEvent(self, event):
-        # 关闭komga
-        stop_komga()
         with SQLiteDatabase() as db:
             historys = db.query_data('cmbok_download_history', {'status': 1})
             if len(historys) > 0:
@@ -385,11 +398,13 @@ class Window(FluentWindow):
                 if w.exec():
                     # 更新下载任务
                     db.update_data('cmbok_download_history', {'status': -3}, {'status': 1})
+                    stop_komga()  # 确认退出才关闭 Komga
                     self._cleanup_info_bars()  # 清理 InfoBar，避免退出时 eventFilter 访问已销毁对象
                     event.accept()  # 允许关闭
                 else:
-                    event.ignore()  # 忽略关闭事件
+                    event.ignore()  # 忽略关闭事件，Komga 保持运行
             else:
+                stop_komga()  # 无未完成任务，关闭 Komga
                 self._cleanup_info_bars()
                 event.accept()
 

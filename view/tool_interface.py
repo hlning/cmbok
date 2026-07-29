@@ -27,12 +27,15 @@ class ToolInterface(ScrollArea):
         self.toepub.clicked.connect(lambda: self.show_box(3))
         self.todoc = ToolCard(QImage(':/cmbok/images/to_doc.png'), '转DOC', '支持常见格式转换成DOC')
         self.todoc.clicked.connect(lambda: self.show_box(4))
+        self.mergeepub = ToolCard(QImage(':/cmbok/images/merge_epub.png'), '合并EPUB', '支持常见格式合并成EPUB')
+        self.mergeepub.clicked.connect(lambda: self.show_box(5))
 
         self.flowLayout = AutoFlowLayout()
         self.flowLayout.addWidget(self.topdf)
         self.flowLayout.addWidget(self.mergepdf)
         self.flowLayout.addWidget(self.toepub)
         self.flowLayout.addWidget(self.todoc)
+        self.flowLayout.addWidget(self.mergeepub)
 
         self.__initWidget()
 

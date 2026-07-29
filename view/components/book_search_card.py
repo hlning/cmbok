@@ -4,13 +4,13 @@ import logging
 import math
 import traceback
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-from PyQt5.QtGui import QPixmap, QMovie
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
+from PyQt5.QtGui import QPixmap, QMovie, QPainter, QColor
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame
-from qfluentwidgets import FlowLayout, CardWidget, SearchLineEdit, StateToolTip, \
+from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QStackedWidget
+from qfluentwidgets import FlowLayout, CardWidget, ElevatedCardWidget, SearchLineEdit, StateToolTip, \
     FluentIcon, TransparentToolButton, BodyLabel, InfoBarPosition, InfoBarIcon, \
-    CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton, PushButton, MessageBox
+    CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton, PushButton, MessageBox, isDarkTheme
 
 from common.config import cfg
 from common.const import language_item
@@ -23,6 +23,33 @@ from view.components.folder_tree import TreeFrame
 from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
+from view.components.empty_state_widget import EmptyStateWidget
+
+
+class ElideLabel(QLabel):
+    """单行文字，超出宽度自动省略（ElideRight），不换行；保证卡片高度统一"""
+    def __init__(self, text='', parent=None, light_color=None, dark_color=None):
+        super().__init__(parent)
+        self._full_text = text or ''
+        self._light = light_color
+        self._dark = dark_color
+        self.setWordWrap(False)
+        self.setText(text)
+
+    def setFullText(self, text):
+        self._full_text = text or ''
+        self.update()
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        if self._light or self._dark:
+            painter.setPen(QColor(self._dark if isDarkTheme() else self._light))
+        else:
+            painter.setPen(self.palette().windowText().color())
+        fm = painter.fontMetrics()
+        elided = fm.elidedText(self._full_text, Qt.ElideRight, self.width())
+        painter.drawText(self.rect(), Qt.AlignVCenter | Qt.AlignLeft, elided)
 
 
 # 搜索区域
@@ -47,6 +74,7 @@ class BookSearchCardView(QWidget):
         self.hBoxLayout1 = QHBoxLayout()
         self.hBoxLayout1.setSpacing(6)
         self.lineEdit = SearchLineEdit()
+        self.lineEdit.setFixedWidth(500)
         self.lineEdit.setPlaceholderText('请输入图书名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchBook(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
@@ -55,8 +83,10 @@ class BookSearchCardView(QWidget):
         self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
         self.resetBtn.clicked.connect(self.reset)
 
-        self.hBoxLayout1.addWidget(self.lineEdit, 1)
+        self.hBoxLayout1.addStretch()
+        self.hBoxLayout1.addWidget(self.lineEdit)
         self.hBoxLayout1.addWidget(self.resetBtn)
+        self.hBoxLayout1.addStretch()
 
         self.vBoxLayout.addLayout(self.hBoxLayout1)
 
@@ -96,10 +126,16 @@ class BookSearchCardView(QWidget):
         items = ['格式', 'EPUB', 'AZW', 'AZW3', 'MOBI', 'PDF', 'TXT', 'CBZ', 'DJV', 'DJVU', 'FB2', 'LIT', 'RTF']
         self.extensionsComboBox.addItems(items)
 
+        # 下拉列表最多显示 20 项，避免年份过多导致下拉超出软件高度
+        for box in (self.startDateComboBox, self.endDateComboBox, self.languageComboBox, self.extensionsComboBox):
+            box.setMaxVisibleItems(20)
+
+        self.hBoxLayout2.addStretch()
         self.hBoxLayout2.addWidget(self.startDateComboBox)
         self.hBoxLayout2.addWidget(self.endDateComboBox)
         self.hBoxLayout2.addWidget(self.languageComboBox)
         self.hBoxLayout2.addWidget(self.extensionsComboBox)
+        self.hBoxLayout2.addStretch()
         self.vBoxLayout.addLayout(self.hBoxLayout2)
 
         # 分页栏
@@ -132,12 +168,19 @@ class BookSearchCardView(QWidget):
         self.flowLayout = AutoFlowLayout(self.resultScrollWidget)
         self.resultScrollArea.setWidget(self.resultScrollWidget)
 
+        # 结果区：搜索结果 / 空状态占位（初始提示输入关键字搜索）
+        self.resultStack = QStackedWidget(self)
+        self.resultStack.addWidget(self.resultScrollArea)  # 页0：搜索结果
+        self.emptyWidget = EmptyStateWidget(FluentIcon.SEARCH, '输入图书关键字进行搜索~', self)
+        self.resultStack.addWidget(self.emptyWidget)  # 页1：空状态
+        self.resultStack.setCurrentWidget(self.emptyWidget)
+
         self.vBoxLayout.setContentsMargins(15, 0, 36, 0)
         self.vBoxLayout.setSpacing(10)
         self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.flowLayout.setHorizontalSpacing(12)
         self.flowLayout.setVerticalSpacing(12)
-        self.vBoxLayout.addWidget(self.resultScrollArea, 1)
+        self.vBoxLayout.addWidget(self.resultStack, 1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignRight)
 
         self.titleLabel.setObjectName('viewTitleLabel')
@@ -166,7 +209,11 @@ class BookSearchCardView(QWidget):
                 return
 
             self.stateTooltip = StateToolTip('正在加载', '请耐心等待~~', self)
-            self.stateTooltip.move(270, 25)
+            sh = self.stateTooltip.sizeHint()
+            # 居中于所在界面的可视区中心（view 宽度中心），而非卡片自身宽度
+            view = self.parent()
+            cx = view.width() // 2 - self.x() - 125
+            self.stateTooltip.move(max(0, cx - sh.width() // 2), 5)
             self.stateTooltip.show()
 
             # 获取精确搜索条件
@@ -216,12 +263,12 @@ class BookSearchCardView(QWidget):
                     pagination = results['pagination']
                     books = results['books']
                     if len(books) > 0:
+                        self.resultStack.setCurrentWidget(self.resultScrollArea)
                         self.pager.setVisible(True)
                         if self.is_search:
                             self.book_list = books
                             total = pagination['total_items']
                             self._total = total
-                            self.titleLabel.setText('搜索结果')
                             self.pager.setPage(0, math.ceil(total / self._pageSize), total)
                             self.getBooks(0)
                             self.stateTooltip.setContent('加载完成啦，(*^▽^*)')
@@ -230,6 +277,9 @@ class BookSearchCardView(QWidget):
                             self.getBooks(self._pendingPage)
                     else:
                         self.pager.setVisible(False)
+                        self.emptyWidget.setIcon(FluentIcon.FOLDER)
+                        self.emptyWidget.setText('一本图书都没有搜索到，o(╥﹏╥)o')
+                        self.resultStack.setCurrentWidget(self.emptyWidget)
                         self.stateTooltip.setContent('一本图书都没有搜索到，o(╥﹏╥)o')
         except Exception:
             self.stateTooltip.setContent('系统异常，o(╥﹏╥)o')
@@ -255,6 +305,8 @@ class BookSearchCardView(QWidget):
                     self.addSampleCard(book)
                 # 更新分页栏当前页
                 self.pager.setPage(index, math.ceil(self._total / self._pageSize), self._total)
+                # 卡片宽度刷新（首次渲染时宽度可能未就绪，确保每行一条）
+                QTimer.singleShot(0, self.refreshCardWidth)
 
     # 每页条数变化
     def _onPageSizeChanged(self, size):
@@ -263,31 +315,36 @@ class BookSearchCardView(QWidget):
             self.pager.setPage(0, math.ceil(self._total / self._pageSize), self._total)
             self.getBooks(0)
 
-    # 搜索框+重置按钮的宽度，用于卡片自适应
-    def _searchRowWidth(self):
-        rw = self.resetBtn.width() or self.resetBtn.sizeHint().width()
-        return self.lineEdit.width() + self.hBoxLayout1.spacing() + rw
+    def _cardWidth(self):
+        # 卡片宽度=结果区宽，每行只显示一条，随窗口自适应
+        lm = self.vBoxLayout.contentsMargins()
+        vw = self.width() - lm.left() - lm.right()
+        return max(200, vw - 5)
 
     def addSampleCard(self, book):
         """ add sample card """
         card = BookCard(book, self)
-        card.setFixedWidth(self._searchRowWidth())
+        card.setFixedWidth(self._cardWidth())
         self.flowLayout.addWidget(card)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # 窗口宽度变化时，已存在的搜索结果卡片跟随搜索行宽度自适应
+    def refreshCardWidth(self):
+        # 窗口宽度变化时，已存在的搜索结果卡片跟随结果区宽度自适应（每行一条）
         if self.flowLayout.count() > 0:
-            w = self._searchRowWidth()
+            w = self._cardWidth()
             for i in range(self.flowLayout.count()):
                 item = self.flowLayout.itemAt(i)
                 if item and item.widget():
                     item.widget().setFixedWidth(w)
             self.flowLayout.invalidate()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 延迟到布局完成后再重排，确保取到最新结果区宽度
+        QTimer.singleShot(0, self.refreshCardWidth)
+
 
 # 图书卡片
-class BookCard(CardWidget):
+class BookCard(ElevatedCardWidget):
     def __init__(self, book, parent=None):
         super().__init__(parent=parent)
         # 图书信息
@@ -306,16 +363,17 @@ class BookCard(CardWidget):
         self.iconWidget.setFixedSize(40, 50)
         self.load_image(self.cover)
 
-        self.nameLabel = BodyLabel(truncate_string(self.name, 35), self)
+        self.nameLabel = ElideLabel(self.name, self, light_color='#000000', dark_color='#ffffff')
+        self.nameLabel.setStyleSheet("font: 14px 'Segoe UI', 'Microsoft YaHei', 'PingFang SC';")
         self.nameLabel.setToolTip(self.name)
-        self.authorLabel = CaptionLabel(truncate_string(self.author, 36), self)
+        self.authorLabel = ElideLabel(self.author, self, light_color='#606060', dark_color='#d2d2d2')
+        self.authorLabel.setStyleSheet("font: 12px 'Segoe UI', 'Microsoft YaHei', 'PingFang SC';")
         self.authorLabel.setToolTip(self.author)
 
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()
 
         self.setFixedHeight(73)
-        self.authorLabel.setTextColor("#606060", "#d2d2d2")
 
         self.hBoxLayout.setContentsMargins(20, 11, 11, 11)
         self.hBoxLayout.setSpacing(15)
@@ -323,7 +381,7 @@ class BookCard(CardWidget):
 
         self.vBoxLayout.setAlignment(Qt.AlignVCenter)
         self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
-        self.vBoxLayout.setSpacing(0)
+        self.vBoxLayout.setSpacing(4)
         self.vBoxLayout.addWidget(self.nameLabel, 0, Qt.AlignVCenter)
         self.vBoxLayout.addWidget(self.authorLabel, 0, Qt.AlignVCenter)
         self.hBoxLayout.addLayout(self.vBoxLayout)

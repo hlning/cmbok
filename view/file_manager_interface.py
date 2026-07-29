@@ -225,6 +225,10 @@ class FileManagerInterface(QWidget):
     # 打开所在目录
     def open_dir(self):
         current_index = self.treeView.currentIndex()
+        if not current_index.isValid():
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请先选择一个文件或文件夹(*￣︶￣)', self,
+                     InfoBarPosition.TOP)
+            return
         target_path = self.model.filePath(current_index)
         self.open_containing_folder(target_path)
 
@@ -249,6 +253,10 @@ class FileManagerInterface(QWidget):
             return
 
         current_index = self.treeView.currentIndex()
+        if not current_index.isValid():
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '请先选择一个文件或文件夹(*￣︶￣)', self,
+                     InfoBarPosition.TOP)
+            return
         target_path = self.model.filePath(current_index)
 
         try:

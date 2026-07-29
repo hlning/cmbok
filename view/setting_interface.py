@@ -4,14 +4,15 @@ import traceback
 
 import requests
 from PyQt5.QtCore import Qt, QUrl
-from PyQt5.QtGui import QDesktopServices, QPixmap
+from PyQt5.QtGui import QDesktopServices, QPixmap, QColor
 from PyQt5.QtWidgets import QWidget, QLabel, QFileDialog, QDialog, QVBoxLayout
 from qfluentwidgets import FluentIcon as FIF, InfoBarIcon, InfoBarPosition, MessageBox
 from qfluentwidgets import InfoBar
 from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingCard, PushSettingCard,
                             HyperlinkCard, PrimaryPushSettingCard, ScrollArea,
                             ComboBoxSettingCard, ExpandLayout, CustomColorSettingCard,
-                            setTheme, setThemeColor, RangeSettingCard)
+                            setTheme, setThemeColor, RangeSettingCard, SubtitleLabel, CaptionLabel,
+                            LineEdit, MessageBoxBase)
 
 from common.config import cfg, GITHUBURL, QQ_URL, GITHUB_RELEASE_API
 from common.signal_bus import signalBus
@@ -104,6 +105,14 @@ class SettingInterface(ScrollArea):
             '如果开启，软件退出后komga依旧会运行',
             configItem=cfg.komgaBackgrounder,
             parent=self.komgaSettingGroup
+        )
+
+        self.customKomgaUrlCard = PushSettingCard(
+            '设置地址',
+            FIF.LINK,
+            'Komga自定义地址',
+            cfg.get(cfg.customKomgaUrl) or '未配置（使用内置Komga，菜单打开127.0.0.1:25600）',
+            self.komgaSettingGroup
         )
 
         # 漫画设置
@@ -355,6 +364,8 @@ class SettingInterface(ScrollArea):
         self.komgaSettingGroup.addSettingCard(self.isRunKomgaCard)
         # Komga是否保留后台
         self.komgaSettingGroup.addSettingCard(self.komgaBackgrounderCard)
+        # Komga自定义地址
+        self.komgaSettingGroup.addSettingCard(self.customKomgaUrlCard)
         # epub是否保存到漫画根目录
         self.comicSettingGroup.addSettingCard(self.epubSaveFolderCard)
         # 是否删除章节图片
@@ -437,6 +448,15 @@ class SettingInterface(ScrollArea):
         cfg.set(cfg.calibrePath, file_name)
         self.calibrePathCard.setContent(file_name)
 
+    def __onCustomKomgaUrlCardClicked(self):
+        # 配置自定义 Komga 地址：留空恢复使用内置 Komga
+        w = KomgaUrlDialog(cfg.get(cfg.customKomgaUrl), self)
+        if w.exec():
+            url = w.urlLineEdit.text().strip()
+            cfg.set(cfg.customKomgaUrl, url)
+            self.customKomgaUrlCard.setContent(
+                url or '未配置（使用内置Komga，菜单打开127.0.0.1:25600）')
+
     def __connectSignalToSlot(self):
         """ connect signal to slot """
         cfg.appRestartSig.connect(self.__showRestartTooltip)
@@ -450,6 +470,10 @@ class SettingInterface(ScrollArea):
         # ebook-convert.exe路径选择监听
         self.calibrePathCard.clicked.connect(
             self.__onCalibrePathCardClicked)
+
+        # Komga自定义地址设置监听
+        self.customKomgaUrlCard.clicked.connect(
+            self.__onCustomKomgaUrlCardClicked)
 
         # personalization
         cfg.themeChanged.connect(setTheme)
@@ -481,3 +505,39 @@ class SettingInterface(ScrollArea):
             fg = win.frameGeometry()
             dlg.move(fg.center() - dlg.rect().center())
             dlg.exec()
+
+
+# Komga 自定义地址输入对话框
+class KomgaUrlDialog(MessageBoxBase):
+    """Komga 自定义地址输入框（留空=恢复使用内置 Komga）"""
+
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.titleLabel = SubtitleLabel('Komga自定义地址', self)
+        self.urlLineEdit = LineEdit(self)
+        self.urlLineEdit.setText(url or '')
+        self.urlLineEdit.setPlaceholderText('例如：http://192.168.1.10:25600')
+        self.urlLineEdit.setClearButtonEnabled(True)
+
+        self.warningLabel = CaptionLabel('请以 http:// 或 https:// 开头', self)
+        self.warningLabel.setTextColor('#cf1010', QColor(255, 28, 32))
+
+        self.viewLayout.addWidget(self.titleLabel)
+        self.viewLayout.addWidget(self.urlLineEdit)
+        self.viewLayout.addWidget(self.warningLabel)
+        self.warningLabel.hide()
+
+        self.yesButton.setText('确定')
+        self.cancelButton.setText('取消')
+        self.widget.setMinimumWidth(400)
+
+    def validate(self):
+        url = self.urlLineEdit.text().strip()
+        # 允许留空（清空=恢复内置）；非空需以 http:// 或 https:// 开头
+        isValid = True
+        if url and not (url.startswith('http://') or url.startswith('https://')):
+            self.warningLabel.setText('请以 http:// 或 https:// 开头')
+            isValid = False
+        self.warningLabel.setHidden(isValid)
+        self.urlLineEdit.setError(not isValid)
+        return isValid

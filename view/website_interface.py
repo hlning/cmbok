@@ -7,17 +7,17 @@ import traceback
 import uuid
 from functools import partial
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent
-from PyQt5.QtGui import QPixmap, QMovie, QCursor, QIcon, QColor, QPainter, QDesktopServices
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent, QRectF
+from PyQt5.QtGui import QPixmap, QMovie, QCursor, QIcon, QColor, QPainter, QDesktopServices, QPainterPath
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QMainWindow, \
     QDesktopWidget, QFrame
-from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, FlowLayout, SearchLineEdit, SegmentedToolWidget, \
+from qfluentwidgets import ScrollArea, CardWidget, ElevatedCardWidget, BodyLabel, FlowLayout, SearchLineEdit, SegmentedToolWidget, \
     FluentIcon, InfoBarPosition, Flyout, \
     FlyoutAnimationType, InfoBarIcon, PipsPager, PipsScrollButtonDisplayMode, FlyoutViewBase, PrimaryPushButton, \
     SingleDirectionScrollArea, CheckBox, StateToolTip, MessageBox, MessageBoxBase, TransparentToolButton, LineEdit, \
-    Theme, PrimaryToolButton
+    Theme, PrimaryToolButton, themeColor, isDarkTheme, ThemeColor
 
 from common.config import cfg
 from common.sqlite_util import SQLiteDatabase
@@ -27,6 +27,7 @@ from service.cmbok_service import ComicWebsiteChapterImages, EpubThread, Website
 from utils.base_utils import truncate_string, get_current_time, get_directories
 from utils.utils_files_and_folders import del_folder, move_files
 from view.components.auto_flow_layout import AutoFlowLayout
+from view.components.empty_state_widget import EmptyStateWidget
 from view.components.info_bar_tip import show_tip
 
 
@@ -44,6 +45,79 @@ def _tinted_icon(fluent_icon, color):
     p.drawPixmap(0, 0, pix)
     p.end()
     return QIcon(tinted)
+
+
+class FlatColorToolButton(PrimaryToolButton):
+    """扁平实色按钮：自绘背景，无圆角/边框/阴影，不受主题切换 QSS 覆盖"""
+
+    def _normalColor(self):
+        raise NotImplementedError
+
+    def _hoverColor(self):
+        return self._normalColor()
+
+    def _pressedColor(self):
+        return self._normalColor()
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.Antialiasing)
+        if not self.isEnabled():
+            color = self._normalColor()
+            painter.setOpacity(0.5)
+        elif self.isPressed:
+            color = self._pressedColor()
+        elif self.isHover:
+            color = self._hoverColor()
+        else:
+            color = self._normalColor()
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(color)
+        # 左圆角、右直角
+        r = 5
+        rect = self.rect()
+        path = QPainterPath()
+        path.moveTo(rect.left(), rect.top() + r)
+        path.arcTo(QRectF(rect.left(), rect.top(), 2 * r, 2 * r), 180, -90)
+        path.lineTo(rect.right(), rect.top())
+        path.lineTo(rect.right(), rect.bottom())
+        path.lineTo(rect.left() + r, rect.bottom())
+        path.arcTo(QRectF(rect.left(), rect.bottom() - 2 * r, 2 * r, 2 * r), 270, -90)
+        path.closeSubpath()
+        painter.drawPath(path)
+        if self._icon is not None:
+            if not self.isEnabled():
+                painter.setOpacity(0.786)
+            w, h = 14, 14
+            x = (self.width() - w) / 2
+            y = (self.height() - h) / 2
+            self._drawIcon(self._icon, painter, QRectF(x, y, w, h))
+
+
+class PrimaryFlatToolButton(FlatColorToolButton):
+    """主题色扁平按钮（编辑）"""
+
+    def _normalColor(self):
+        return themeColor()
+
+    def _hoverColor(self):
+        return ThemeColor.DARK_1.color() if not isDarkTheme() else ThemeColor.LIGHT_1.color()
+
+    def _pressedColor(self):
+        return ThemeColor.DARK_2.color() if not isDarkTheme() else ThemeColor.LIGHT_3.color()
+
+
+class RedFlatToolButton(FlatColorToolButton):
+    """红色扁平按钮（删除）"""
+
+    def _normalColor(self):
+        return QColor(201, 79, 79)
+
+    def _hoverColor(self):
+        return QColor(197, 47, 47)
+
+    def _pressedColor(self):
+        return QColor(168, 38, 38)
 
 
 class WebsiteInterface(QWidget):
@@ -148,9 +222,15 @@ class WebsitWidget(QWidget):
         self.searchLayout.addStretch()
         self.vBoxLayout.addLayout(self.searchLayout)
 
-        self.flowLayout = AutoFlowLayout()
-        # 查询站点记录
-        self.vBoxLayout.addLayout(self.flowLayout)
+        # 站点卡片容器：flowLayout 放入 flowContainer，再由 resultStack 与空状态切换
+        self.flowContainer = QWidget(self)
+        self.flowLayout = AutoFlowLayout(self.flowContainer)
+        self.resultStack = QStackedWidget(self)
+        self.resultStack.addWidget(self.flowContainer)  # 页0：站点卡片
+        self.emptyWidget = EmptyStateWidget(FluentIcon.FOLDER, '没有站点请添加~', self)
+        self.resultStack.addWidget(self.emptyWidget)  # 页1：空状态
+        self.resultStack.setCurrentWidget(self.emptyWidget)
+        self.vBoxLayout.addWidget(self.resultStack, 1)
 
         # 分页器
         self.pager = PipsPager(Qt.Horizontal)
@@ -163,7 +243,6 @@ class WebsitWidget(QWidget):
         # 页码切换
         self.pager.currentIndexChanged.connect(lambda index: self.getRecords(self.lineEdit.text(), index))
 
-        self.vBoxLayout.addStretch(1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter)
 
     # 回车搜索
@@ -208,6 +287,7 @@ class WebsitWidget(QWidget):
     def getRecords(self, text, index):
         # 清空流动布局内容
         self.flowLayout.takeAllWidgets()
+        origin_text = text  # 原始搜索词（None/空=未搜索，查全部）
         text = text or 'None'
         if self.type == 1:
             with SQLiteDatabase() as db:
@@ -229,14 +309,25 @@ class WebsitWidget(QWidget):
                         type=self.type
                     )
                     self.flowLayout.addWidget(card)
+        # 有卡片显示列表，无卡片显示空状态
+        if self.flowLayout.count() > 0:
+            self.resultStack.setCurrentWidget(self.flowContainer)
+        else:
+            # 未搜索=没有站点；有搜索词=没搜到
+            if not origin_text:
+                self.emptyWidget.setIcon(FluentIcon.FOLDER)
+                self.emptyWidget.setText('没有站点请添加~')
+            else:
+                self.emptyWidget.setIcon(FluentIcon.FOLDER)
+                self.emptyWidget.setText('没有搜索到站点')
+            self.resultStack.setCurrentWidget(self.emptyWidget)
         self._layoutCards()
 
     # 窗口宽度变化时，卡片每行 3 个、宽度自适应
     def _layoutCards(self):
         n = 3
-        lm = self.vBoxLayout.contentsMargins()
         fm = self.flowLayout.contentsMargins()
-        avail = self.width() - lm.left() - lm.right() - fm.left() - fm.right()
+        avail = self.flowContainer.width() - fm.left() - fm.right()
         hs = self.flowLayout.horizontalSpacing()
         hs = hs if hs and hs > 0 else 10
         card_w = max(int(avail / n) - hs, 100)
@@ -298,7 +389,7 @@ class WebsiteEditDialog(MessageBoxBase):
 
 
 # 站点卡片
-class WebsiteCard(CardWidget):
+class WebsiteCard(ElevatedCardWidget):
     def __init__(self, id, name, icon, url, comic_cover_dom=None, comic_name_dom=None,
                  chapter_name_dom=None, chapter_link_dom=None, img_dom=None, use_frame=None,
                  img_attr=None, img_script=None, type=1, parent=None):
@@ -321,39 +412,40 @@ class WebsiteCard(CardWidget):
         self.titleLabel = BodyLabel(truncate_string(name, 15), self)
         self.titleLabel.setToolTip(name)
 
-        self.mainLayout = QVBoxLayout(self)
-        self.setFixedWidth(260)
-
-        self.setFixedHeight(100)
-
-        self.mainLayout.setContentsMargins(20, 8, 11, 8)
-        self.mainLayout.setSpacing(4)
-
-        # 上行：图标 + 名称
-        self.topLayout = QHBoxLayout()
-        self.topLayout.setContentsMargins(0, 0, 0, 0)
-        self.topLayout.setSpacing(10)
-        self.topLayout.addWidget(self.iconWidget)
-        self.topLayout.addWidget(self.titleLabel, 0, Qt.AlignVCenter)
-        self.topLayout.addStretch()
-        self.mainLayout.addLayout(self.topLayout)
-
-        # 下行：编辑/删除按钮靠右（仅图标）
-        self.btnLayout = QHBoxLayout()
-        self.btnLayout.setContentsMargins(0, 0, 0, 0)
-        self.btnLayout.setSpacing(6)
-        self.btnLayout.addStretch()
-        self.editBtn = TransparentToolButton(FluentIcon.EDIT)
-        self.editBtn.setFixedSize(26, 26)
+        self.editBtn = PrimaryFlatToolButton(FluentIcon.EDIT)
+        self.editBtn.setFixedSize(28, 22)
         self.editBtn.setToolTip('编辑')
         self.editBtn.clicked.connect(self.editWebsite)
-        self.deleteBtn = TransparentToolButton(_tinted_icon(FluentIcon.DELETE, '#d83b3b'))
-        self.deleteBtn.setFixedSize(26, 26)
+        self.deleteBtn = RedFlatToolButton(FluentIcon.DELETE)
+        self.deleteBtn.setFixedSize(28, 22)
         self.deleteBtn.setToolTip('删除')
         self.deleteBtn.clicked.connect(self.deleteWebsite)
-        self.btnLayout.addWidget(self.editBtn)
-        self.btnLayout.addWidget(self.deleteBtn)
-        self.mainLayout.addLayout(self.btnLayout)
+
+        # 左右两块：左侧封面+名称，右侧上编辑下删除
+        self.mainLayout = QHBoxLayout(self)
+        self.setFixedWidth(260)
+        self.setFixedHeight(110)
+
+        self.mainLayout.setContentsMargins(15, 10, 0, 10)
+        self.mainLayout.setSpacing(12)
+
+        # 左侧：封面 + 名称（水平居中）
+        self.leftLayout = QVBoxLayout()
+        self.leftLayout.setContentsMargins(0, 0, 0, 0)
+        self.leftLayout.setSpacing(6)
+        self.leftLayout.addWidget(self.iconWidget, 0, Qt.AlignHCenter)
+        self.leftLayout.addWidget(self.titleLabel, 0, Qt.AlignHCenter)
+        self.mainLayout.addLayout(self.leftLayout, 1)
+
+        # 右侧：编辑（上）/ 删除（下）
+        self.rightLayout = QVBoxLayout()
+        self.rightLayout.setContentsMargins(0, 0, 0, 0)
+        self.rightLayout.setSpacing(6)
+        self.rightLayout.addStretch(1)
+        self.rightLayout.addWidget(self.editBtn, 0, Qt.AlignHCenter)
+        self.rightLayout.addWidget(self.deleteBtn, 0, Qt.AlignHCenter)
+        self.rightLayout.addStretch(1)
+        self.mainLayout.addLayout(self.rightLayout)
 
         self.iconWidget.mousePressEvent = partial(self.go_website, url, comic_cover_dom, comic_name_dom,
                                                   chapter_name_dom, chapter_link_dom, img_dom,

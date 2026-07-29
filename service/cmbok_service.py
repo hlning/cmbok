@@ -428,6 +428,7 @@ class BookDownload(QThread):
                                                                             'author': self.book_author,
                                                                             'key': self.book_id,
                                                                             'book_hash': self.book_hash,
+                                                                            'book_extension': self.book_extension,
                                                                             'process': 0,
                                                                             'type': 2,
                                                                             'status': 2})

@@ -20,7 +20,7 @@ class ComicInterface(ScrollArea):
 
         self.banner = BannerWidget(self)
 
-        self.basicInputView = ComicSearchCardView('开始搜索', self.view)
+        self.basicInputView = ComicSearchCardView('🎨漫画搜索', self.view)
         self.basicInputView.success.connect(self.infoShow)
 
         self.__initWidget()
@@ -35,7 +35,7 @@ class ComicInterface(ScrollArea):
         self.setWidgetResizable(True)
 
         self.vBoxLayout.setContentsMargins(0, 0, 0, 15)
-        self.vBoxLayout.setSpacing(5)
+        self.vBoxLayout.setSpacing(12)
         self.vBoxLayout.addWidget(self.banner)
         self.vBoxLayout.addWidget(self.basicInputView, 1)
 
@@ -50,11 +50,15 @@ class ComicInterface(ScrollArea):
             show_tip(InfoBarIcon.WARNING, '温馨提示', '前一个任务还在下载，请等会再下载吧(*￣︶￣)', self,
                          InfoBarPosition.TOP_RIGHT)
 
+    # 切回漫画搜索时重排卡片宽度（窗口宽度可能已在其他界面变化）
+    def refreshCards(self):
+        self.basicInputView.refreshCardWidth()
+
 
 class BannerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
-        self.setFixedHeight(336)
+        self.setMinimumHeight(336)
 
         self.vBoxLayout = QVBoxLayout(self)
         self.galleryLabel = QLabel('我看过的漫画', self)

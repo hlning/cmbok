@@ -51,6 +51,11 @@ class ToolMessageBox(MessageBoxBase):
             self.convert_btn_txt = '转换'
             self.allowed_extensions = ['.pdf', '.mobi', '.epub', '.fb2', '.cbz', '.svg', '.txt', '.png', '.jpg',
                                        '.jpeg', '.bmp']
+        elif self.type == 5:
+            self.title = '合并EPUB'
+            self.desc = '支持EPUB、DOCX、TXT、MD、HTML、RTF'
+            self.convert_btn_txt = '合并'
+            self.allowed_extensions = ['.epub', '.docx', '.txt', '.md', '.html', '.htm', '.rtf', '.odt']
 
         self.titleLabel = SubtitleLabel(self.title, self)
         self.descLabel = CaptionLabel(self.desc)
@@ -189,13 +194,25 @@ class ToolMessageBox(MessageBoxBase):
                      InfoBarPosition.TOP)
             return
 
-        # 合并文件需要输入文件名称
-        if self.type == 2:
+        # 转 EPUB/DOC、合并 EPUB 依赖 pandoc，提前检测可用性
+        if self.type in (3, 4, 5):
+            try:
+                import pypandoc
+                pypandoc.get_pandoc_version()
+            except Exception:
+                MessageBox("温馨提示",
+                           "未检测到 pandoc，转 EPUB/DOC 需要安装 pandoc 并加入系统 PATH。",
+                           self.parent()).exec()
+                return
+
+        # 合并文件需要输入文件名称（合并PDF / 合并EPUB）
+        if self.type in (2, 5):
             w = CustomMessageBox(self)
             if w.exec():
                 self.merge_file_name = w.urlLineEdit.text()
                 # 检查文件是否存在
-                save_path = os.path.join(cfg.get(cfg.toolSaveFolder), f'{self.merge_file_name}.pdf')
+                merge_ext = '.pdf' if self.type == 2 else '.epub'
+                save_path = os.path.join(cfg.get(cfg.toolSaveFolder), f'{self.merge_file_name}{merge_ext}')
                 if os.path.exists(save_path):
                     w = MessageBox("温馨提示",
                                    "文件已存在，继续合并则会覆盖已存在的文件",
@@ -206,27 +223,47 @@ class ToolMessageBox(MessageBoxBase):
             else:
                 return
 
-        w = MessageBox("温馨提示",
-                       f"{self.convert_btn_txt}过程中程序会出现无法响应，请等待即可，最终会有提示信息",
-                       self.parent())
-        w.setClosableOnMaskClicked(True)
-        if w.exec():
-            # 禁用按钮
-            self.disabledBtn()
-            files = []
-            for index in range(file_count):  # 遍历所有项
-                item_text = self.list_widget.item(index).text()  # 获取每一项的文本
-                files.append(item_text)  # 将文本添加到列表中
+        # 检测输出文件是否已存在，存在则确认覆盖（合并 PDF 已单独确认，跳过）
+        if self.type in (1, 3, 4):
+            existing = []
+            save_folder = cfg.get(cfg.toolSaveFolder)
+            for index in range(file_count):
+                fp = self.list_widget.item(index).text()
+                stem = os.path.splitext(os.path.basename(fp))[0]
+                if self.type == 1:
+                    out = os.path.join(save_folder, f'{stem}.pdf')
+                elif self.type == 3:
+                    out = os.path.join(save_folder, f'{stem}.epub')
+                else:
+                    out = os.path.join(save_folder, f'{stem}.docx')
+                if os.path.exists(out):
+                    existing.append(out)
+            if existing:
+                w = MessageBox("温馨提示",
+                               "以下输出文件已存在，继续将覆盖：\n" + "\n".join(existing),
+                               self.parent())
+                w.setClosableOnMaskClicked(True)
+                if not w.exec():
+                    return
 
-            self.bookSearch = ConvertTool(files, self.type, self.merge_file_name)
-            self.bookSearch.process.connect(self.convertStart)
-            self.bookSearch.finished.connect(self.convertFinish)
-            self.bookSearch.start()
+        # 禁用按钮，转换在子线程执行，UI 保持响应（不再弹"无法响应"预提示）
+        self.disabledBtn()
+        files = []
+        for index in range(file_count):  # 遍历所有项
+            item_text = self.list_widget.item(index).text()  # 获取每一项的文本
+            files.append(item_text)  # 将文本添加到列表中
+
+        self.bookSearch = ConvertTool(files, self.type, self.merge_file_name)
+        self.bookSearch.process.connect(self.convertStart)
+        self.bookSearch.finished.connect(self.convertFinish)
+        self.bookSearch.start()
 
     # 开始转换
     def convertStart(self):
         self.stateTooltip = StateToolTip(f'正在{self.convert_btn_txt}', '请耐心等待~~', self)
-        self.stateTooltip.move(330, 300)
+        sh = self.stateTooltip.sizeHint()
+        self.stateTooltip.move(max(0, self.width() // 2 - sh.width() // 2) - 120,
+                               max(0, self.height() // 2 - sh.height() // 2))
         self.stateTooltip.show()
 
     # 转换完成

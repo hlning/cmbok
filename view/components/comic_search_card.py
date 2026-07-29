@@ -3,11 +3,11 @@ import logging
 import math
 import traceback
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
 from PyQt5.QtGui import QColor, QPixmap, QMovie, QDesktopServices
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget, QScrollArea
-from qfluentwidgets import TextWrap, FlowLayout, CardWidget, SearchLineEdit, StateToolTip, \
+from qfluentwidgets import TextWrap, FlowLayout, CardWidget, ElevatedCardWidget, SearchLineEdit, StateToolTip, \
     FluentIcon, TransparentToolButton, Flyout, \
     CheckBox, FlyoutViewBase, BodyLabel, PrimaryPushButton, FlyoutAnimationType, SegmentedWidget, \
     SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog, IndeterminateProgressBar
@@ -20,6 +20,7 @@ from utils.base_utils import truncate_string, get_current_time
 from view.components.folder_tree import TreeFrame
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
+from view.components.empty_state_widget import EmptyStateWidget
 
 
 # 搜索区域
@@ -31,9 +32,14 @@ class ComicSearchCardView(QWidget):
         super().__init__(parent=parent)
         self.titleLabel = QLabel(title, self)
         self.lineEdit = SearchLineEdit()
+        self.lineEdit.setFixedWidth(500)
         self.lineEdit.setPlaceholderText('请输入漫画名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchComic(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
+
+        # 重置按钮
+        self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
+        self.resetBtn.clicked.connect(self.reset)
 
         self.comic_list = []
         self.comic_name = ''
@@ -71,6 +77,13 @@ class ComicSearchCardView(QWidget):
         self.flowLayout = FlowLayout(self.resultScrollWidget)
         self.resultScrollArea.setWidget(self.resultScrollWidget)
 
+        # 结果区：搜索结果 / 空状态占位（初始提示输入关键字搜索）
+        self.resultStack = QStackedWidget(self)
+        self.resultStack.addWidget(self.resultScrollArea)  # 页0：搜索结果
+        self.emptyWidget = EmptyStateWidget(FluentIcon.SEARCH, '输入漫画关键字进行搜索~', self)
+        self.resultStack.addWidget(self.emptyWidget)  # 页1：空状态
+        self.resultStack.setCurrentWidget(self.emptyWidget)
+
         self.stateTooltip = None
 
         self.vBoxLayout.setContentsMargins(36, 0, 36, 24)
@@ -80,8 +93,16 @@ class ComicSearchCardView(QWidget):
         self.flowLayout.setVerticalSpacing(12)
 
         self.vBoxLayout.addWidget(self.titleLabel)
-        self.vBoxLayout.addWidget(self.lineEdit)
-        self.vBoxLayout.addWidget(self.resultScrollArea, 1)
+        # 搜索框+重置按钮固定宽度居中（参考图书搜索），上下加边距避免过于紧凑
+        self.searchLayout = QHBoxLayout()
+        self.searchLayout.setSpacing(6)
+        self.searchLayout.setContentsMargins(0, 8, 0, 8)
+        self.searchLayout.addStretch()
+        self.searchLayout.addWidget(self.lineEdit)
+        self.searchLayout.addWidget(self.resetBtn)
+        self.searchLayout.addStretch()
+        self.vBoxLayout.addLayout(self.searchLayout)
+        self.vBoxLayout.addWidget(self.resultStack, 1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignRight)
 
         self.titleLabel.setObjectName('viewTitleLabel')
@@ -91,6 +112,20 @@ class ComicSearchCardView(QWidget):
     def enter(self):
         self.searchComic(self.lineEdit.text(), 0)
 
+    # 重置搜索：清空输入框与结果，回到初始状态
+    def reset(self):
+        self.lineEdit.setText('')
+        # self.comic_list = []
+        # self.comic_name = ''
+        # self._total = 0
+        # self._currentPage = 0
+        # self._pendingPage = 0
+        # self.flowLayout.takeAllWidgets()
+        # self.pager.setVisible(False)
+        # self.emptyWidget.setIcon(FluentIcon.SEARCH)
+        # self.emptyWidget.setText('输入漫画关键字进行搜索~')
+        # self.resultStack.setCurrentWidget(self.emptyWidget)
+
     # 搜索漫画
     def searchComic(self, text, offset, is_search=True):
         if text is not None and text != '' and self.stateTooltip is None:
@@ -98,7 +133,11 @@ class ComicSearchCardView(QWidget):
             self.is_search = is_search
 
             self.stateTooltip = StateToolTip('正在加载', '请耐心等待~~', self)
-            self.stateTooltip.move(330, 25)
+            sh = self.stateTooltip.sizeHint()
+            # 居中于所在界面的可视区中心（view 宽度中心），而非卡片自身宽度
+            view = self.parent()
+            cx = view.width() // 2 - self.x() - 125
+            self.stateTooltip.move(max(0, cx - sh.width() // 2), 5)
             self.stateTooltip.show()
 
             self.comicSearch = ComicSearch(comic_name=text, offset=offset)
@@ -123,11 +162,11 @@ class ComicSearchCardView(QWidget):
                 if comic is not None:
                     comics = comic['list']
                     if len(comics) > 0:
+                        self.resultStack.setCurrentWidget(self.resultScrollArea)
                         if self.is_search:
                             self.comic_list = comics
                             total = int(comic['total'])
                             self._total = total
-                            self.titleLabel.setText('搜索结果')
                             self.pager.setVisible(True)
                             self.pager.setPage(0, math.ceil(total / self._pageSize), total)
                             self.getComics(0)
@@ -137,9 +176,15 @@ class ComicSearchCardView(QWidget):
                             self.getComics(self._pendingPage)
                     else:
                         self.pager.setVisible(False)
+                        self.emptyWidget.setIcon(FluentIcon.FOLDER)
+                        self.emptyWidget.setText('一本漫画都没有搜索到，o(╥﹏╥)o')
+                        self.resultStack.setCurrentWidget(self.emptyWidget)
                         self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
                 else:
                     self.pager.setVisible(False)
+                    self.emptyWidget.setIcon(FluentIcon.FOLDER)
+                    self.emptyWidget.setText('一本漫画都没有搜索到，o(╥﹏╥)o')
+                    self.resultStack.setCurrentWidget(self.emptyWidget)
                     self.stateTooltip.setContent('一本漫画都没有搜索到，o(╥﹏╥)o')
         except Exception as e:
             self.stateTooltip.setContent('系统异常，o(╥﹏╥)o')
@@ -182,11 +227,20 @@ class ComicSearchCardView(QWidget):
         # 预留纵向滚动条宽度，避免滚动条出现后每行少一个卡片
         return max(200, (vw - 5 - 2 * self.flowLayout.horizontalSpacing()) // 3)
 
+    def refreshCardWidth(self):
+        # 仅调整已有卡片宽度，不重建卡片（重建会逐张查库判收藏+发网络图片请求，卡顿）
+        if self.flowLayout.count() > 0:
+            w = self._cardWidth()
+            for i in range(self.flowLayout.count()):
+                item = self.flowLayout.itemAt(i)
+                if item and item.widget():
+                    item.widget().setFixedWidth(w)
+            self.flowLayout.invalidate()
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # 窗口缩放时重排当前页，保持每行3个
-        if self.comic_list and self.pager.isVisible() and self.stateTooltip is None:
-            self.getComics(self._currentPage)
+        # 延迟到布局完成后再重排，确保取到最新结果区宽度
+        QTimer.singleShot(0, self.refreshCardWidth)
 
     def addSampleCard(self, comic):
         """ add sample card """
@@ -196,7 +250,7 @@ class ComicSearchCardView(QWidget):
 
 
 # 漫画卡片
-class ComicCard(CardWidget):
+class ComicCard(ElevatedCardWidget):
     """ Sample card """
 
     def __init__(self, comic, parent=None):
@@ -215,6 +269,7 @@ class ComicCard(CardWidget):
         self.titleLabel.setToolTip(self.name)
         self.authorLabel = QLabel(TextWrap.wrap(self.author, 30, False)[0], self)
         self.authorLabel.setToolTip(self.author)
+        self.authorLabel.setStyleSheet("font: 12px 'Segoe UI', 'Microsoft YaHei', 'PingFang SC';")
 
         self.hBoxLayout = QHBoxLayout(self)
         self.vBoxLayout = QVBoxLayout()

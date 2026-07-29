@@ -63,7 +63,7 @@ class SQLiteDatabase:
         self.ensure_table('cmbok_download_history',
                           {'id': 'INTEGER PRIMARY KEY', 'cover': 'TEXT', 'name': 'TEXT',
                            'author': 'TEXT', 'key': 'TEXT', 'chapter_name': 'TEXT',
-                           'chapter_path_word': 'TEXT', 'book_hash': 'TEXT', 'type': 'INTEGER',
+                           'chapter_path_word': 'TEXT', 'book_hash': 'TEXT', 'book_extension': 'TEXT', 'type': 'INTEGER',
                            'status': 'INTEGER', 'process': 'INTEGER', 'start_time': 'TEXT', 'finish_time': 'TEXT'})
 
         # 漫画/图书收藏记录表

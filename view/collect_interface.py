@@ -1,13 +1,14 @@
 # coding:utf-8
+import json
 import logging
 import math
 from uuid import uuid1
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl
-from PyQt5.QtGui import QPixmap, QMovie, QColor
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QMimeData, QPoint, QTimer
+from PyQt5.QtGui import QPixmap, QMovie, QColor, QDrag
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget
-from qfluentwidgets import ScrollArea, CardWidget, BodyLabel, CaptionLabel, \
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QApplication
+from qfluentwidgets import ScrollArea, CardWidget, ElevatedCardWidget, BodyLabel, CaptionLabel, \
     FlowLayout, SearchLineEdit, SegmentedToolWidget, TransparentToolButton, FluentIcon, InfoBarPosition, Flyout, \
     FlyoutAnimationType, InfoBarIcon, PipsPager, PipsScrollButtonDisplayMode, RoundMenu, Action, MessageBoxBase, \
     SubtitleLabel, LineEdit, MessageBox, BreadcrumbBar, setFont
@@ -21,6 +22,8 @@ from utils.base_utils import get_current_time, truncate_string
 from view.components.comic_search_card import DownloadFlyoutView
 from view.components.folder_tree import TreeFrame
 from view.components.auto_flow_layout import AutoFlowLayout
+from view.components.empty_state_widget import EmptyStateWidget
+from view.components.pagination_bar import PaginationBar
 from view.components.info_bar_tip import show_tip
 
 
@@ -137,22 +140,26 @@ class CollectWidget(QWidget):
         self.breadcrumbBar.currentItemChanged.connect(lambda routeKey: self.changeBreadcrumbBar(routeKey))
         self.vBoxLayout.addWidget(self.breadcrumbBar)
 
-        self.flowLayout = AutoFlowLayout()
-        # 查询收藏记录
-        self.vBoxLayout.addLayout(self.flowLayout)
+        # 收藏卡片容器：flowLayout 放入 flowContainer，再由 resultStack 与空状态切换
+        self.flowContainer = QWidget(self)
+        self.flowLayout = AutoFlowLayout(self.flowContainer)
+        self.resultStack = QStackedWidget(self)
+        self.resultStack.addWidget(self.flowContainer)  # 页0：收藏卡片
+        self.emptyWidget = EmptyStateWidget(FluentIcon.BOOK_SHELF, '还没有任何收藏，快去找漫画和图书吧~', self)
+        self.resultStack.addWidget(self.emptyWidget)  # 页1：空状态
+        self.resultStack.setCurrentWidget(self.emptyWidget)
+        self.vBoxLayout.addWidget(self.resultStack, 1)
 
-        # 分页器
-        self.pager = PipsPager(Qt.Horizontal)
-        # 设置当前页码
-        self.pager.setCurrentIndex(0)
+        # 分页组件
+        self._pageSize = 16
+        self._searchText = None
+        self._pageCount = 1
+        self._total = 0
+        self.pager = PaginationBar([16, 32], self)
+        self.pager.pageChanged.connect(self.getRecords)
+        self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
         self.setPage(None)
-        # 始终显示前进和后退按钮
-        self.pager.setNextButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        self.pager.setPreviousButtonDisplayMode(PipsScrollButtonDisplayMode.ALWAYS)
-        # 页码切换
-        self.pager.currentIndexChanged.connect(lambda index: self.getRecords(self.lineEdit.text(), index))
 
-        self.vBoxLayout.addStretch(1)
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter)
 
     # 面包屑切换
@@ -186,6 +193,7 @@ class CollectWidget(QWidget):
 
     # 设置页码
     def setPage(self, text):
+        self._searchText = text
         with SQLiteDatabase() as db:
             # 查询总数更新分页器
             # 查询文件夹数量
@@ -196,22 +204,27 @@ class CollectWidget(QWidget):
             collection_count = db.count_data('cmbok_collection_record',
                                              conditions={'name': f'%{text}%', 'type': self.type,
                                                          'folder_id': self.folder_id})
-            pageNumber = math.ceil((folder_count + collection_count) / 16)
-            # 设置当前页码
-            if pageNumber == 0:
-                self.pager.setCurrentIndex(0)
-            # 设置页数
-            self.pager.setPageNumber(pageNumber)
-            # 设置圆点数量
-            self.pager.setVisibleNumber(10 if pageNumber > 10 else pageNumber)
+            count = folder_count + collection_count
+            pageCount = max(1, math.ceil(count / self._pageSize))
+        self._pageCount = pageCount
+        self._total = count
+        self.pager.setVisible(count > 0)
+        self.pager.setPage(0, pageCount, count)
+        self.getRecords(0)
 
     # 获取收藏记录
-    def getRecords(self, text, index):
+    def getRecords(self, index):
         # 清空流动布局内容
         self.flowLayout.takeAllWidgets()
-        self.comicCollects = ComicCollects(index=index, text=text, type=self.type, folder_id=self.folder_id)
+        self.comicCollects = ComicCollects(index=index, text=self._searchText, type=self.type, folder_id=self.folder_id)
         self.comicCollects.success.connect(self.updateView)
         self.comicCollects.start()
+        self.pager.setPage(index, self._pageCount, self._total)
+
+    # 每页条数变化
+    def _onPageSizeChanged(self, size):
+        self._pageSize = size
+        self.setPage(self._searchText)
 
     # 流动布局
     def updateView(self, status, comics):
@@ -235,14 +248,18 @@ class CollectWidget(QWidget):
                         is_folder=comic.is_folder
                     )
                     self.flowLayout.addWidget(card)
+            # 有卡片显示收藏区，无卡片显示空状态
+            if self.flowLayout.count() > 0:
+                self.resultStack.setCurrentWidget(self.flowContainer)
+            else:
+                self.resultStack.setCurrentWidget(self.emptyWidget)
         self._layoutCards()
 
-    # 窗口宽度变化时，卡片每行 2 个、宽度自适应
+    # 窗口宽度变化时，卡片每行 3 个、宽度自适应
     def _layoutCards(self):
-        n = 2
-        lm = self.vBoxLayout.contentsMargins()
+        n = 3
         fm = self.flowLayout.contentsMargins()
-        avail = self.width() - lm.left() - lm.right() - fm.left() - fm.right()
+        avail = self.flowContainer.width() - fm.left() - fm.right()
         hs = self.flowLayout.horizontalSpacing()
         hs = hs if hs and hs > 0 else 10
         card_w = max(int(avail / n) - hs, 100)
@@ -326,7 +343,7 @@ class CustomMessageBox(MessageBoxBase):
 
 
 # 收藏卡片
-class CollectCard(CardWidget):
+class CollectCard(ElevatedCardWidget):
     def __init__(self, id, cover, name, author, key, book_hash=None, extension=None, type=1, is_folder=None,
                  parent=None):
         super().__init__(parent)
@@ -398,6 +415,16 @@ class CollectCard(CardWidget):
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addLayout(self.vBtnBoxLayout)
 
+        # 长按拖拽支持
+        self._dragStart = None
+        self._dragReady = False
+        self._dragTimer = QTimer(self)
+        self._dragTimer.setSingleShot(True)
+        self._dragTimer.timeout.connect(lambda: setattr(self, '_dragReady', True))
+        # 文件夹卡片作为拖拽放置目标
+        if self.is_folder == 'folder':
+            self.setAcceptDrops(True)
+
     # 刷新记录
     def refresh(self):
         current_widget = self.parent()
@@ -465,8 +492,17 @@ class CollectCard(CardWidget):
         with SQLiteDatabase() as db:
             # 取消收藏
             db.delete_data('cmbok_collection_record', {'key': key, 'type': type})
-            self.parent().search(None)
-            show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent().parent())
+        # 向上找到 CollectWidget 再刷新（CollectCard 直接父是 flowContainer，没有 search 方法）
+        target = None
+        p = self.parent()
+        while p is not None:
+            if isinstance(p, CollectWidget):
+                target = p
+                break
+            p = p.parent()
+        if target is not None:
+            target.search(None)
+            show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', target)
 
     # 显示漫画信息
     def showComicInfo(self, icon, title, author, path_word):
@@ -529,6 +565,97 @@ class CollectCard(CardWidget):
                     current_widget.addBreadcrumbBar(str(self.id), self.name)
                     return
                 current_widget = current_widget.parent()  # 继续向上查找
+
+    # 长按拖拽：按下记录起点并启动长按定时器
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton:
+            self._dragStart = event.pos()
+            self._dragReady = False
+            self._dragTimer.start(400)
+
+    # 长按后移动启动拖拽
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if not self._dragReady or not self._dragStart:
+            return
+        if (event.pos() - self._dragStart).manhattanLength() < QApplication.startDragDistance():
+            return
+        self._dragTimer.stop()
+        self._dragReady = False
+        self._dragStart = None
+        self._startDrag()
+
+    # 释放：取消拖拽
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._dragTimer.stop()
+        self._dragReady = False
+        self._dragStart = None
+
+    # 启动拖拽，携带卡片信息
+    def _startDrag(self):
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData('application/x-collect-card',
+                     json.dumps({'id': self.id, 'is_folder': self.is_folder, 'type': self.type}).encode('utf-8'))
+        drag.setMimeData(mime)
+        drag.exec_(Qt.MoveAction)
+
+    # 以下是文件夹卡片作为拖拽放置目标
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat('application/x-collect-card'):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat('application/x-collect-card'):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if not event.mimeData().hasFormat('application/x-collect-card'):
+            event.ignore()
+            return
+        try:
+            info = json.loads(bytes(event.mimeData().data('application/x-collect-card')).decode('utf-8'))
+        except Exception:
+            event.ignore()
+            return
+        src_id = info.get('id')
+        src_is_folder = info.get('is_folder')
+        if src_id == self.id:
+            event.ignore()
+            return
+        with SQLiteDatabase() as db:
+            if src_is_folder == 'folder':
+                # 防循环：目标若是源的子孙文件夹则拒绝
+                if self._is_descendant(db, src_id, self.id):
+                    show_tip(InfoBarIcon.WARNING, '温馨提示', '不能移动到自身的子文件夹下', self,
+                             InfoBarPosition.TOP)
+                    event.ignore()
+                    return
+                db.update_data('comic_collection_folder', {'parent_id': self.id}, {'id': src_id})
+            else:
+                db.update_data('cmbok_collection_record', {'folder_id': self.id}, {'id': src_id})
+        event.acceptProposedAction()
+        self.refresh()
+
+    # 判断 target_id 是否是 src_id 的子孙文件夹（向上查祖先链，防止文件夹循环嵌套）
+    def _is_descendant(self, db, src_id, target_id):
+        fid = target_id
+        visited = set()
+        while fid and fid not in visited:
+            visited.add(fid)
+            parent = db.query_data('comic_collection_folder', {'id': fid})
+            if not parent:
+                break
+            fid = parent[0].parent_id
+            if fid == src_id:
+                return True
+        return False
 
     # 移动收藏记录
     def openTreeFolder(self):

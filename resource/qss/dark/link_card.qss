@@ -1,12 +1,11 @@
 LinkCard {
-    border: 1px solid rgb(46, 46, 46);
+    border: none;
     border-radius: 10px;
     background-color: rgba(39, 39, 39, 0.95);
 }
 
 LinkCard:hover {
     background-color: rgba(39, 39, 39, 0.93);
-    border: 1px solid rgb(66, 66, 66);
 }
 
 #titleLabel {

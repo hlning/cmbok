@@ -18,7 +18,7 @@ class BookInterface(ScrollArea):
         self.view = QWidget(self)
         self.vBoxLayout = QVBoxLayout(self.view)
 
-        self.basicInputView = BookSearchCardView('开始搜索', self.view)
+        self.basicInputView = BookSearchCardView('📚图书搜索', self.view)
         self.basicInputView.success.connect(self.infoShow)
 
         self.__initWidget()
@@ -43,3 +43,7 @@ class BookInterface(ScrollArea):
         elif status == 'error':
             show_tip(InfoBarIcon.ERROR, '温馨提示', '下载失败，(。・＿・。)ﾉI’m sorry~', self,
                      InfoBarPosition.TOP_RIGHT)
+
+    # 切回图书搜索时重排卡片宽度
+    def refreshCards(self):
+        self.basicInputView.refreshCardWidth()

@@ -1,4 +1,5 @@
 # coding:utf-8
+from datetime import date
 from enum import Enum
 
 from PyQt5.QtCore import QLocale
@@ -43,10 +44,10 @@ class Config(QConfig):
         "Folders", "ToolSaveFolder", "app/download/convert", FolderValidator())
 
     # 窗口宽度
-    windowWidth = RangeConfigItem("Width", "WindowWidth", 965, RangeValidator(900, 1080))
+    windowWidth = RangeConfigItem("Width", "WindowWidth", 950, RangeValidator(950, 1920))
 
     # 窗口高度
-    windowHeight = RangeConfigItem("Height", "WindowHeight", 750, RangeValidator(450, 950))
+    windowHeight = RangeConfigItem("Height", "WindowHeight", 750, RangeValidator(450, 1080))
 
     # komga是否随cmbok启动运行
     isRunKomga = ConfigItem("Komga", "IsRunKomga", True, BoolValidator())
@@ -56,6 +57,9 @@ class Config(QConfig):
 
     # komga是否保留后台
     komgaBackgrounder = ConfigItem("Komga", "KomgaBackgrounder", False, BoolValidator())
+
+    # Komga 自定义地址（配置后不启动内置 Komga，点击菜单直接打开该地址；留空使用内置 127.0.0.1:25600）
+    customKomgaUrl = ConfigItem("Komga", "CustomKomgaUrl", '')
 
     # epub是否保存到漫画根目录
     epubSaveFolder = ConfigItem("Folders", "EpubSaveFolder", True, BoolValidator())
@@ -101,14 +105,14 @@ class Config(QConfig):
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
-    version = ConfigItem("Update", "Version", 'V1.0.7')
+    version = ConfigItem("Update", "Version", 'V2.0.0')
 
-    year = ConfigItem("Update", "Year", '2026')
+    year = ConfigItem("Update", "Year", date.today().year)
 
     # 拷贝漫画地址
-    copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
+    copy_url = ConfigItem("CopyVersion", "CopyUrl", '******')
 
-    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.kid1412.by')
+    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", '******')
 
     # 拷贝漫画 authorization token（可选，留空则匿名访问；参考 Breeze 插件 auth.token）
     copy_token = ConfigItem("CopyVersion", "CopyToken", '')
@@ -125,8 +129,8 @@ class Config(QConfig):
     # 是否使用内置 z-library 账号（轮询下载，全局每日5本，无需登录）
     use_zlibrary_builtin_account = ConfigItem("Book", "UseBuiltinAccount", False, BoolValidator())
 
-VERSION_NO = 'V1.0.7'
-YEAR = 2026
+VERSION_NO = 'V2.0.0'
+YEAR = date.today().year
 AUTHOR = "甜甜的王甜甜"
 HELP_URL = "https://support.qq.com/products/656074"
 GITHUBURL = "https://github.com/hlning/cmbok"
