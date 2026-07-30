@@ -20,10 +20,11 @@ class Frame(QFrame):
 
 
 class TreeFrame(Frame):
-    def __init__(self, type, parent=None):
+    def __init__(self, type, exclude_id=None, parent=None):
         super().__init__(parent)
         self.tree = TreeWidget(self)
         self.addWidget(self.tree)
+        self._exclude_id = exclude_id
 
         # 查询所有文件夹
         with SQLiteDatabase() as db:
@@ -34,7 +35,7 @@ class TreeFrame(Frame):
 
         for item in self.items:
             parent_id = item.parent_id
-            if parent_id == 0:  # 根节点
+            if parent_id == 0 and item.id != exclude_id:  # 根节点，跳过被排除的文件夹
                 tree_item = QTreeWidgetItem([item.name])
                 self.tree.addTopLevelItem(tree_item)
                 self.add_children(tree_item, item.id)
@@ -48,7 +49,7 @@ class TreeFrame(Frame):
 
     def add_children(self, parent_item, parent_id):
         for item in self.items:
-            if item.parent_id == parent_id:
+            if item.parent_id == parent_id and item.id != self._exclude_id:  # 跳过被排除的文件夹及其子树
                 child_item = QTreeWidgetItem([item.name])
                 parent_item.addChild(child_item)
                 self.add_children(child_item, item.id)

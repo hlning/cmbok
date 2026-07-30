@@ -10,7 +10,10 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'tkinter',
+        'numpy.distutils', 'numpy.f2py', 'numpy.tests',
+    ],
     noarchive=False,
     optimize=0,
 )

@@ -59,8 +59,10 @@ class LinkCard(ElevatedCardWidget):
         w = self.width() - lm.left() - lm.right()
         if w <= 0:
             return
-        cover_h = int(w * 80 / 180)
-        self.iconWidget.setFixedSize(w, cover_h)
+        # 高度按比例缩放，但封顶 100，避免宽窗口封面过大挤压描述文字
+        cover_h = min(int(w * 80 / 180), 130)
+        cover_w = int(cover_h * 180 / 80)
+        self.iconWidget.setFixedSize(cover_w, cover_h)
 
     def paintEvent(self, e):
         # 卡片顶部圆角、底部直角；边框只画上、左、右三边（去掉下边框）

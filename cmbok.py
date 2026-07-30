@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import os
 import sys
 import traceback
@@ -12,6 +13,9 @@ from common.sqlite_util import SQLiteDatabase
 from view.main_window import Window
 
 if __name__ == '__main__':
+    # PyInstaller frozen 下 multiprocessing spawn 子进程会重新执行本脚本，
+    # freeze_support 让子进程走自己的逻辑后退出，不再启动第二个 app 窗口
+    multiprocessing.freeze_support()
     try:
         # enable dpi scale
         if cfg.get(cfg.dpiScale) == "Auto":

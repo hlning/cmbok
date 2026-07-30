@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import traceback
 from uuid import uuid1
 
 from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QMimeData, QPoint, QTimer
@@ -275,30 +276,37 @@ class CollectWidget(QWidget):
 
     # 右键菜单
     def contextMenuEvent(self, event):
-        menu = RoundMenu()
-        menu.addAction(
-            Action(FluentIcon.FOLDER, '添加文件夹', triggered=lambda: self.addFolder()))
-        # 显示右键菜单
-        menu.exec_(event.globalPos())
+        try:
+            menu = RoundMenu()
+            menu.addAction(
+                Action(FluentIcon.FOLDER, '添加文件夹', triggered=lambda: self.addFolder()))
+            # 显示右键菜单
+            menu.exec_(event.globalPos())
+        except Exception:
+            logging.info('收藏右键菜单异常: ' + traceback.format_exc())
 
     # 添加文件夹
     def addFolder(self):
-        w = CustomMessageBox(self)
-        if w.exec():
-            # 保存到数据库
-            name = w.urlLineEdit.text()
-            print('当前文件夹id=' + str(self.folder_id))
-            with SQLiteDatabase() as db:
-                db.insert_data('comic_collection_folder',
-                               {'name': name, 'type': self.type, 'parent_id': self.folder_id,
-                                'add_time': get_current_time()})
+        try:
+            w = CustomMessageBox(self)
+            if w.exec():
+                # 保存到数据库
+                name = w.urlLineEdit.text()
+                print('当前文件夹id=' + str(self.folder_id))
+                with SQLiteDatabase() as db:
+                    db.insert_data('comic_collection_folder',
+                                   {'name': name, 'type': self.type, 'parent_id': self.folder_id,
+                                    'add_time': get_current_time()})
 
-            current_widget = self.parent()
-            while current_widget is not None:
-                if isinstance(current_widget, CollectInterface):
-                    current_widget.updateComicRecords(self.type)
-                    return
-                current_widget = current_widget.parent()  # 继续向上查找
+                current_widget = self.parent()
+                while current_widget is not None:
+                    if isinstance(current_widget, CollectInterface):
+                        current_widget.updateComicRecords(self.type)
+                        return
+                    current_widget = current_widget.parent()  # 继续向上查找
+        except Exception:
+            logging.info('添加文件夹异常: ' + traceback.format_exc())
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '添加失败，请重试', self, InfoBarPosition.TOP)
 
 
 # 自定义对话框
@@ -436,18 +444,22 @@ class CollectCard(ElevatedCardWidget):
 
     # 删除文件夹
     def deleteFolder(self):
-        title = '确认要删除这个文件夹?'
-        content = "删除文件夹下的子文件夹和所有收藏"
-        w = MessageBox(title, content, self.parent())
-        w.setClosableOnMaskClicked(True)
-        if w.exec():
-            with SQLiteDatabase() as db:
-                # 先取消文件下的所有收藏
-                db.delete_data('cmbok_collection_record', {'folder_id': self.id})
-                # 删除文件夹
-                db.delete_data('comic_collection_folder', {'id': self.id})
+        try:
+            title = '确认要删除这个文件夹?'
+            content = "删除文件夹下的子文件夹和所有收藏"
+            w = MessageBox(title, content, self.parent())
+            w.setClosableOnMaskClicked(True)
+            if w.exec():
+                with SQLiteDatabase() as db:
+                    # 先取消文件下的所有收藏
+                    db.delete_data('cmbok_collection_record', {'folder_id': self.id})
+                    # 删除文件夹
+                    db.delete_data('comic_collection_folder', {'id': self.id})
 
-            self.refresh()
+                self.refresh()
+        except Exception:
+            logging.info('删除文件夹异常: ' + traceback.format_exc())
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '删除失败，请重试', self, InfoBarPosition.TOP)
 
     # 加载网络图片
     def load_image(self, image_url):
@@ -546,13 +558,16 @@ class CollectCard(ElevatedCardWidget):
 
     # 右键菜单
     def contextMenuEvent(self, event):
-        menu = RoundMenu()
+        try:
+            menu = RoundMenu()
 
-        menu.addAction(
-            Action(FluentIcon.MOVE, '移动', triggered=self.openTreeFolder))
+            menu.addAction(
+                Action(FluentIcon.MOVE, '移动', triggered=self.openTreeFolder))
 
-        # 显示右键菜单
-        menu.exec_(event.globalPos())
+            # 显示右键菜单
+            menu.exec_(event.globalPos())
+        except Exception:
+            logging.info('收藏卡片右键菜单异常: ' + traceback.format_exc())
 
     # 双击文件夹打开
     def mouseDoubleClickEvent(self, event):
@@ -593,55 +608,67 @@ class CollectCard(ElevatedCardWidget):
         self._dragReady = False
         self._dragStart = None
 
+    # 禁用 ElevatedCardWidget 的位移抬起动画：打包后 pos 动画时序异常会干扰拖拽
+    def _startElevateAni(self, start, end):
+        pass
+
     # 启动拖拽，携带卡片信息
     def _startDrag(self):
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setData('application/x-collect-card',
-                     json.dumps({'id': self.id, 'is_folder': self.is_folder, 'type': self.type}).encode('utf-8'))
+        # 用 text/plain 携带卡片信息：Windows 下自定义 mime 格式 hasFormat 不稳定，标准 text 格式更可靠
+        mime.setText(json.dumps({'id': self.id, 'is_folder': self.is_folder, 'type': self.type}))
         drag.setMimeData(mime)
         drag.exec_(Qt.MoveAction)
 
     # 以下是文件夹卡片作为拖拽放置目标
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat('application/x-collect-card'):
+        if event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat('application/x-collect-card'):
+        if event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        if not event.mimeData().hasFormat('application/x-collect-card'):
+        if not event.mimeData().hasText():
             event.ignore()
             return
         try:
-            info = json.loads(bytes(event.mimeData().data('application/x-collect-card')).decode('utf-8'))
+            info = json.loads(event.mimeData().text())
         except Exception:
             event.ignore()
             return
         src_id = info.get('id')
         src_is_folder = info.get('is_folder')
-        if src_id == self.id:
+        logging.info(f'[拖拽] src_id={src_id} src_is_folder={src_is_folder} target_id={self.id} target_name={self.name}')
+        # 只有文件夹移动到自己时才算"相同"：记录与文件夹分属不同表，id 可能相同但不是同一对象
+        if src_is_folder == 'folder' and src_id == self.id:
+            logging.info('[拖拽] 源与目标相同，忽略')
             event.ignore()
             return
-        with SQLiteDatabase() as db:
-            if src_is_folder == 'folder':
-                # 防循环：目标若是源的子孙文件夹则拒绝
-                if self._is_descendant(db, src_id, self.id):
-                    show_tip(InfoBarIcon.WARNING, '温馨提示', '不能移动到自身的子文件夹下', self,
-                             InfoBarPosition.TOP)
-                    event.ignore()
-                    return
-                db.update_data('comic_collection_folder', {'parent_id': self.id}, {'id': src_id})
-            else:
-                db.update_data('cmbok_collection_record', {'folder_id': self.id}, {'id': src_id})
-        event.acceptProposedAction()
-        self.refresh()
+        try:
+            with SQLiteDatabase() as db:
+                if src_is_folder == 'folder':
+                    # 防循环：目标若是源的子孙文件夹则拒绝
+                    if self._is_descendant(db, src_id, self.id):
+                        logging.info(f'[拖拽] 拒绝：目标 {self.id} 是源 {src_id} 的子孙文件夹')
+                        show_tip(InfoBarIcon.WARNING, '温馨提示', '不能移动到自身的子文件夹下', self, InfoBarPosition.TOP)
+                        event.ignore()
+                        return
+                    db.update_data('comic_collection_folder', {'parent_id': self.id}, {'id': src_id})
+                else:
+                    db.update_data('cmbok_collection_record', {'folder_id': self.id}, {'id': src_id})
+            logging.info('[拖拽] 移动成功')
+            event.acceptProposedAction()
+            self.refresh()
+        except Exception:
+            logging.info('[拖拽] 移动异常: ' + traceback.format_exc())
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '移动失败，请重试', self, InfoBarPosition.TOP)
 
     # 判断 target_id 是否是 src_id 的子孙文件夹（向上查祖先链，防止文件夹循环嵌套）
     def _is_descendant(self, db, src_id, target_id):
@@ -659,31 +686,35 @@ class CollectCard(ElevatedCardWidget):
 
     # 移动收藏记录
     def openTreeFolder(self):
-        w = TreeMessageBox(self.parent())
-        if w.exec():
-            # 遍历树节点获取选中的节点
-            selected_items = w.treeFrame.tree.selectedItems()
-            if selected_items:
-                # 如果有选中的项，获取第一个选中项并输出名称
-                selected_item = selected_items[0]
-                folder_name = selected_item.text(0)  # 获取第一列的文本
+        try:
+            w = TreeMessageBox(self.parent(), exclude_id=self.id if self.is_folder == 'folder' else None)
+            if w.exec():
+                # 遍历树节点获取选中的节点
+                selected_items = w.treeFrame.tree.selectedItems()
+                if selected_items:
+                    # 如果有选中的项，获取第一个选中项并输出名称
+                    selected_item = selected_items[0]
+                    folder_name = selected_item.text(0)  # 获取第一列的文本
 
-                with SQLiteDatabase() as db:
-                    # 通过名称查询文件夹id
-                    folder = db.query_data('comic_collection_folder', {'name': folder_name, 'type': self.type})
-                    folder_id = 0 if folder_name == '首页' else folder[0].id
-                    # 更新记录到文件夹下
-                    if self.is_folder == 'folder':
-                        db.update_data('comic_collection_folder', {'parent_id': folder_id}, {'id': self.id})
-                    else:
-                        db.update_data('cmbok_collection_record', {'folder_id': folder_id}, {'id': self.id})
+                    with SQLiteDatabase() as db:
+                        # 通过名称查询文件夹id
+                        folder = db.query_data('comic_collection_folder', {'name': folder_name, 'type': self.type})
+                        # folder_name 非首页但查不到（重名/已删）时，folder_id 取 0 避免索引越界崩溃
+                        folder_id = 0 if folder_name == '首页' else (folder[0].id if folder else 0)
+                        if self.is_folder == 'folder':
+                            db.update_data('comic_collection_folder', {'parent_id': folder_id}, {'id': self.id})
+                        else:
+                            db.update_data('cmbok_collection_record', {'folder_id': folder_id}, {'id': self.id})
 
-                    self.refresh()
+                        self.refresh()
+        except Exception:
+            logging.info('移动收藏异常: ' + traceback.format_exc())
+            show_tip(InfoBarIcon.ERROR, '温馨提示', '移动失败，请重试', self, InfoBarPosition.TOP)
 
 
 # 树形菜单
 class TreeMessageBox(MessageBoxBase):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, exclude_id=None):
         super().__init__(parent)
 
         # 从父元素找到当前类型
@@ -694,7 +725,7 @@ class TreeMessageBox(MessageBoxBase):
                 type = current_widget.type
             current_widget = current_widget.parent()  # 继续向上查找
 
-        self.treeFrame = TreeFrame(type)
+        self.treeFrame = TreeFrame(type, exclude_id=exclude_id)
         self.viewLayout.addWidget(self.treeFrame)
 
         self.yesButton.setText('确定')

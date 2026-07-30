@@ -45,6 +45,15 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller cmbok_mac.spec --noconfirm
 
+      - name: Analyze size & strip unused
+        run: |
+          echo "=== 体积分析（最大的 20 项）==="
+          du -sh dist/cmbok.app/Contents/MacOS/_internal/* 2>/dev/null | sort -h | tail -20
+          echo "=== 删除 opencv ffmpeg（pdf2docx 不需要视频编解码）==="
+          find dist/cmbok.app -name "opencv_videoio_ffmpeg*" -delete
+          echo "=== 删除后总大小 ==="
+          du -sh dist/cmbok.app
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

@@ -250,46 +250,49 @@ class DownloadWidget(QWidget):
 
     # 表格右键菜单（用右键位置定位行，避免 currentRow 返回旧行号时 item 为 None 崩溃）
     def show_context_menu(self, position):
-        row = self.tableWidget.rowAt(position.y())
-        if row < 0:
-            return
+        try:
+            row = self.tableWidget.rowAt(position.y())
+            if row < 0:
+                return
 
-        id_item = self.tableWidget.item(row, 0)
-        if not id_item:
-            return
-        id = id_item.text()
-        name_item = self.tableWidget.item(row, 1)
-        name = name_item.text() if name_item else ''
-        chapter_item = self.tableWidget.item(row, 3)
-        chapter_name = chapter_item.text() if chapter_item else ''
+            id_item = self.tableWidget.item(row, 0)
+            if not id_item:
+                return
+            id = id_item.text()
+            name_item = self.tableWidget.item(row, 1)
+            name = name_item.text() if name_item else ''
+            chapter_item = self.tableWidget.item(row, 3)
+            chapter_name = chapter_item.text() if chapter_item else ''
 
-        menu = RoundMenu()
+            menu = RoundMenu()
 
-        # 逐个添加动作，Action 继承自 QAction，接受 FluentIconBase 类型的图标
-        if self.type == 1:
+            # 逐个添加动作，Action 继承自 QAction，接受 FluentIconBase 类型的图标
+            if self.type == 1:
+                menu.addAction(
+                    Action(FluentIcon.FOLDER, '打开漫画目录', triggered=lambda: self.openFolder(name)))
+                menu.addAction(
+                    Action(FluentIcon.FOLDER, '打开章节目录',
+                           triggered=lambda: self.openFolder(name, chapter_name)))
+            else:
+                menu.addAction(
+                    Action(FluentIcon.FOLDER, '打开图书目录', triggered=lambda: self.openFolder('')))
+
+            # menu.addAction(
+            #    Action(FluentIcon.DOWNLOAD, '重新下载', triggered=lambda: self.againDownload(id)))
+
             menu.addAction(
-                Action(FluentIcon.FOLDER, '打开漫画目录', triggered=lambda: self.openFolder(name)))
-            menu.addAction(
-                Action(FluentIcon.FOLDER, '打开章节目录',
-                       triggered=lambda: self.openFolder(name, chapter_name)))
-        else:
-            menu.addAction(
-                Action(FluentIcon.FOLDER, '打开图书目录', triggered=lambda: self.openFolder('')))
+                Action(FluentIcon.DELETE, '删除下载记录', triggered=lambda: self.delRecord(id)))
 
-        # menu.addAction(
-        #    Action(FluentIcon.DOWNLOAD, '重新下载', triggered=lambda: self.againDownload(id)))
+            # 清空失败记录
+            menu.addAction(Action(MyFluentIcon.CLEAR, '清空失败记录', triggered=self.delErrorRecord))
 
-        menu.addAction(
-            Action(FluentIcon.DELETE, '删除下载记录', triggered=lambda: self.delRecord(id)))
+            # 清空下载记录
+            menu.addAction(Action(MyFluentIcon.CLEAR, '清空下载记录', triggered=self.delAllRecord))
 
-        # 清空失败记录
-        menu.addAction(Action(MyFluentIcon.CLEAR, '清空失败记录', triggered=self.delErrorRecord))
-
-        # 清空下载记录
-        menu.addAction(Action(MyFluentIcon.CLEAR, '清空下载记录', triggered=self.delAllRecord))
-
-        # 显示右键菜单
-        menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+            # 显示右键菜单
+            menu.exec_(self.tableWidget.viewport().mapToGlobal(position))
+        except Exception:
+            logging.info('下载右键菜单异常: ' + traceback.format_exc())
 
     # 清空失败记录
     def delErrorRecord(self):

@@ -145,15 +145,21 @@ class ToolMessageBox(MessageBoxBase):
         # 验证所选文件格式
         invalid_files = []
 
-        # 清空列表
-        if len(files) > 0:
-            self.list_widget.clear()
-
+        # 追加到已选列表（不清空，支持多次选择累积）；重复文件自动去重
+        existing = {self.list_widget.item(i).text() for i in range(self.list_widget.count())}
+        duplicate_count = 0
         for file in files:
-            if any(file.endswith(ext) for ext in self.allowed_extensions):
-                self.list_widget.addItem(file)
-            else:
+            if not any(file.endswith(ext) for ext in self.allowed_extensions):
                 invalid_files.append(file)
+                continue
+            if file in existing:
+                duplicate_count += 1
+                continue
+            self.list_widget.addItem(file)
+            existing.add(file)
+
+        if duplicate_count > 0:
+            show_tip(InfoBarIcon.INFORMATION, '温馨提示', f'已忽略 {duplicate_count} 个已选择的文件', self, InfoBarPosition.TOP)
 
         if self.list_widget.count() > 0:
             self.list_widget.show()

@@ -44,10 +44,10 @@ class Config(QConfig):
         "Folders", "ToolSaveFolder", "app/download/convert", FolderValidator())
 
     # 窗口宽度
-    windowWidth = RangeConfigItem("Width", "WindowWidth", 950, RangeValidator(950, 1920))
+    windowWidth = RangeConfigItem("Width", "WindowWidth", 1225, RangeValidator(950, 1920))
 
     # 窗口高度
-    windowHeight = RangeConfigItem("Height", "WindowHeight", 750, RangeValidator(450, 1080))
+    windowHeight = RangeConfigItem("Height", "WindowHeight", 900, RangeValidator(450, 1080))
 
     # komga是否随cmbok启动运行
     isRunKomga = ConfigItem("Komga", "IsRunKomga", True, BoolValidator())
@@ -110,9 +110,9 @@ class Config(QConfig):
     year = ConfigItem("Update", "Year", date.today().year)
 
     # 拷贝漫画地址
-    copy_url = ConfigItem("CopyVersion", "CopyUrl", '******')
+    copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
 
-    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", '******')
+    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.kid1412.by')
 
     # 拷贝漫画 authorization token（可选，留空则匿名访问；参考 Breeze 插件 auth.token）
     copy_token = ConfigItem("CopyVersion", "CopyToken", '')

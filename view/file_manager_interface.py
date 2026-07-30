@@ -1,8 +1,10 @@
 # coding:utf-8
+import logging
 import os
 import platform
 import shutil
 import subprocess
+import traceback
 
 from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QColor
@@ -78,15 +80,18 @@ class FileManagerInterface(QWidget):
         self.hBoxLayout.setContentsMargins(50, 30, 50, 30)
 
     def contextMenuEvent(self, event):
-        menu = RoundMenu()
-        menu.addAction(
-            Action(FluentIcon.FOLDER, '创建文件夹', triggered=lambda: self.create_folder(True)))
-        menu.addAction(
-            Action(FluentIcon.FULL_SCREEN, '展开所有', triggered=self.treeView.expandAll))
-        menu.addAction(
-            Action(FluentIcon.BACK_TO_WINDOW, '收起所有', triggered=self.treeView.collapseAll))
-        # 显示右键菜单
-        menu.exec_(event.globalPos())
+        try:
+            menu = RoundMenu()
+            menu.addAction(
+                Action(FluentIcon.FOLDER, '创建文件夹', triggered=lambda: self.create_folder(True)))
+            menu.addAction(
+                Action(FluentIcon.FULL_SCREEN, '展开所有', triggered=self.treeView.expandAll))
+            menu.addAction(
+                Action(FluentIcon.BACK_TO_WINDOW, '收起所有', triggered=self.treeView.collapseAll))
+            # 显示右键菜单
+            menu.exec_(event.globalPos())
+        except Exception:
+            logging.info('文件管理右键菜单异常: ' + traceback.format_exc())
 
     def on_selection_changed(self):
         self.tree_index = self.treeView.currentIndex()
@@ -127,26 +132,29 @@ class FileManagerInterface(QWidget):
         self.treeView.header().setDefaultAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
 
     def show_context_menu(self, position):
-        index = self.treeView.indexAt(position)
-        if not index.isValid():
-            return
+        try:
+            index = self.treeView.indexAt(position)
+            if not index.isValid():
+                return
 
-        menu = RoundMenu()
+            menu = RoundMenu()
 
-        # 逐个添加动作，Action 继承自 QAction，接受 FluentIconBase 类型的图标
-        # 检查选中的项是否为文件夹
-        if os.path.isdir(self.model.filePath(index)):
-            menu.addAction(Action(FluentIcon.FOLDER, '创建文件夹', triggered=self.create_folder))
-        menu.addAction(
-            Action(FluentIcon.FOLDER, '打开所在目录', triggered=self.open_dir))
-        menu.addAction(
-            Action(FluentIcon.COPY, '复制', triggered=lambda: self.copy_or_cut_item('copy'), shortcut='Ctrl+C'))
-        menu.addAction(
-            Action(FluentIcon.CUT, '剪切', triggered=lambda: self.copy_or_cut_item('cut'), shortcut='Ctrl+X'))
-        menu.addAction(Action(FluentIcon.PASTE, '粘贴', triggered=self.paste_item, shortcut='Ctrl+V'))
-        menu.addAction(Action(FluentIcon.DELETE, '删除', triggered=self.delete_item, shortcut='Delete'))
+            # 逐个添加动作，Action 继承自 QAction，接受 FluentIconBase 类型的图标
+            # 检查选中的项是否为文件夹
+            if os.path.isdir(self.model.filePath(index)):
+                menu.addAction(Action(FluentIcon.FOLDER, '创建文件夹', triggered=self.create_folder))
+            menu.addAction(
+                Action(FluentIcon.FOLDER, '打开所在目录', triggered=self.open_dir))
+            menu.addAction(
+                Action(FluentIcon.COPY, '复制', triggered=lambda: self.copy_or_cut_item('copy'), shortcut='Ctrl+C'))
+            menu.addAction(
+                Action(FluentIcon.CUT, '剪切', triggered=lambda: self.copy_or_cut_item('cut'), shortcut='Ctrl+X'))
+            menu.addAction(Action(FluentIcon.PASTE, '粘贴', triggered=self.paste_item, shortcut='Ctrl+V'))
+            menu.addAction(Action(FluentIcon.DELETE, '删除', triggered=self.delete_item, shortcut='Delete'))
 
-        menu.exec_(self.treeView.viewport().mapToGlobal(position))
+            menu.exec_(self.treeView.viewport().mapToGlobal(position))
+        except Exception:
+            logging.info('文件右键菜单异常: ' + traceback.format_exc())
 
     # 创建文件夹
     def create_folder(self, flag):
