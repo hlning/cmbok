@@ -112,7 +112,7 @@ class Config(QConfig):
     # 拷贝漫画地址
     copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
 
-    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.kid1412.by')
+    zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.zlibrary.by')
 
     # 拷贝漫画 authorization token（可选，留空则匿名访问；参考 Breeze 插件 auth.token）
     copy_token = ConfigItem("CopyVersion", "CopyToken", '')
@@ -125,9 +125,17 @@ class Config(QConfig):
     zlibrary_username = ConfigItem("Zlibrary", "Username", '')
     zlibrary_remix_userid = ConfigItem("Zlibrary", "RemixUserid", '')
     zlibrary_remix_userkey = ConfigItem("Zlibrary", "RemixUserkey", '')
+    # 登录邮箱历史（JSON 字符串，登录成功后记录，下拉选择）
+    zlibrary_email_history = ConfigItem("Zlibrary", "EmailHistory", '[]')
 
     # 是否使用内置 z-library 账号（轮询下载，全局每日5本，无需登录）
     use_zlibrary_builtin_account = ConfigItem("Book", "UseBuiltinAccount", False, BoolValidator())
+
+    # 分页每页条数记忆（各页面独立保存，下次启动按记忆数量显示）
+    comicPageSize = ConfigItem("Pagination", "ComicPageSize", 9)
+    bookPageSize = ConfigItem("Pagination", "BookPageSize", 10)
+    collectPageSize = ConfigItem("Pagination", "CollectPageSize", 15)
+    downloadPageSize = ConfigItem("Pagination", "DownloadPageSize", 10)
 
 VERSION_NO = 'V2.0.0'
 YEAR = date.today().year
@@ -138,6 +146,8 @@ GITHUBURL = "https://github.com/hlning/cmbok"
 GITHUB_RELEASE_API = "https://api.github.com/repos/hlning/cmbok/releases/latest"
 # 公告：仓库内 notification.json，经 jsDelivr CDN 拉取（国内可访问）
 NOTIFICATION_URL = "https://cdn.jsdelivr.net/gh/hlning/cmbok@main/notification.json"
+# 地址配置：仓库内 url_config.json，启动时拉取更新 copy_url/zlibrary_url
+URL_CONFIG_URL = "https://cdn.jsdelivr.net/gh/hlning/cmbok@main/url_config.json"
 QQ_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=UJg9rCpoodLcpWGfFguhn9aRBO8i%2FMeQROFiMa5Xaw1DoTtz7JOEOvRcobUAhxAf&busi_data=eyJncm91cENvZGUiOiIxMDAzNzczMDA1IiwidG9rZW4iOiJnQ0dBWlRkOVdKQ3BteGhjSkFNcnVlZ1RPcmRQK3JFaVJuWS9mblNheXBZVUxwaEVNTVRCVENDaVdXTUxlQ2RiIiwidWluIjoiMjMyODg5MzYxMiJ9&data=eR26EQcAE3uiE4QF0IUFlX0NH1JUHyxoAGZbJnsHiT_-88NWV2Ybbp8q9OwC3va4LBGNHTyq_dJqeEZd14dK7Q&svctype=4&tempid=h5_group_info"
 LOG_PATH = 'app/app.log'
 

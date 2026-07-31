@@ -47,7 +47,7 @@ class ToolInterface(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
-        self.vBoxLayout.setContentsMargins(30, 30, 30, 30)
+        self.vBoxLayout.setContentsMargins(36, 30, 36, 30)
         self.vBoxLayout.setSpacing(40)
         self.vBoxLayout.addLayout(self.flowLayout)
         self.vBoxLayout.setAlignment(Qt.AlignTop)

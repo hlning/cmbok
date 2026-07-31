@@ -32,7 +32,8 @@ class BookInterface(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
-        self.vBoxLayout.setContentsMargins(60, 20, 30, 40)
+        # 外层左右边距交由 BookSearchCardView 内部控制（36），与漫画搜索页面结构保持一致
+        self.vBoxLayout.setContentsMargins(0, 20, 0, 15)
         self.vBoxLayout.addWidget(self.basicInputView, 1)
 
     # 温馨提示

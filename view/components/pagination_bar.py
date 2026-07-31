@@ -89,6 +89,13 @@ class PaginationBar(QWidget):
     def _onPageSizeChanged(self, idx):
         self.pageSizeChanged.emit(self.page_sizes[idx])
 
+    def setCurrentPageSize(self, size):
+        """设置当前每页条数（用于记忆恢复），不在可选列表中则保持默认；不触发信号"""
+        if size in self.page_sizes:
+            self.pageSizeBox.blockSignals(True)
+            self.pageSizeBox.setCurrentIndex(self.page_sizes.index(size))
+            self.pageSizeBox.blockSignals(False)
+
     def _goto(self, p):
         if 0 <= p < self._pageCount:
             self.pageChanged.emit(p)

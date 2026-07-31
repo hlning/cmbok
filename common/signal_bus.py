@@ -9,6 +9,7 @@ class SignalBus(QObject):
     micaEnableChanged = pyqtSignal(bool)
     supportSignal = pyqtSignal()
     zlibraryLoginChanged = pyqtSignal(str)  # z-library 登录态变化（email，空=登出）
+    collectChanged = pyqtSignal()  # 收藏/取消收藏后通知收藏页刷新
 
 
 signalBus = SignalBus()

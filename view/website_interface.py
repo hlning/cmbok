@@ -7,7 +7,7 @@ import traceback
 import uuid
 from functools import partial
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent, QRectF
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent, QRectF, QSize
 from PyQt5.QtGui import QPixmap, QMovie, QCursor, QIcon, QColor, QPainter, QDesktopServices, QPainterPath
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWebEngineWidgets import QWebEngineView
@@ -126,37 +126,19 @@ class WebsiteInterface(QWidget):
         super().__init__(parent=parent)
         self.setObjectName('WebsiteInterface')
 
-        self.pivot = SegmentedToolWidget(self)
-        self.stackedWidget = QStackedWidget(self)
+        self.titleLabel = QLabel('🖥️漫画站点', self)
+        self.titleLabel.setObjectName('viewTitleLabel')
 
-        self.hBoxLayout = QHBoxLayout()
         self.vBoxLayout = QVBoxLayout(self)
 
-        # 顶部导航
         # 漫画站点
         self.comicAreaInterface = WebsiteAreaInterface('请输入名称搜索', 1)
-        self.addSubInterface(self.comicAreaInterface, '漫画站点', MyFluentIcon.COMIC)
-        # 图书站点
-        # self.bookAreaInterface = WebsiteAreaInterface('请输入名称搜索', 2)
-        # self.addSubInterface(self.bookAreaInterface, '图书站点', MyFluentIcon.BOOK)
 
-        self.hBoxLayout.addWidget(self.pivot, 0, Qt.AlignCenter)
-        self.vBoxLayout.addLayout(self.hBoxLayout)
-        self.vBoxLayout.addWidget(self.stackedWidget)
-        self.vBoxLayout.setContentsMargins(30, 10, 30, 30)
-
-        self.stackedWidget.setCurrentWidget(self.comicAreaInterface)
-        self.pivot.setCurrentItem(self.comicAreaInterface.objectName())
-        self.pivot.currentItemChanged.connect(
-            lambda k: self.stackedWidget.setCurrentWidget(self.findChild(QWidget, k)))
-
-        self.stackedWidget.currentChanged.connect(lambda index: self.updateWebsiteRecords(index + 1))
-
-    def addSubInterface(self, widget: QLabel, objectName, icon):
-        widget.setObjectName(objectName)
-        widget.setAlignment(Qt.AlignCenter)
-        self.stackedWidget.addWidget(widget)
-        self.pivot.addItem(routeKey=objectName, icon=icon)
+        self.vBoxLayout.addWidget(self.titleLabel)
+        self.vBoxLayout.addWidget(self.comicAreaInterface, 1)
+        self.vBoxLayout.setContentsMargins(36, 20, 36, 15)
+        self.vBoxLayout.setSpacing(12)
+        StyleSheet.SAMPLE_CARD.apply(self)
 
     # 更新漫画站点记录
     def updateWebsiteRecords(self, type=1):
@@ -183,12 +165,23 @@ class WebsiteAreaInterface(ScrollArea):
         self.setObjectName('websiteInterface')
         StyleSheet.COMIC_INTERFACE.apply(self)
 
+        self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.vBoxLayout.addWidget(self.banner)
         self.vBoxLayout.setAlignment(Qt.AlignTop)
+
+        # 透明滚动条，避免占用右侧边距（与漫画搜索 resultScrollArea 一致）
+        self.verticalScrollBar().setStyleSheet(
+            'QScrollBar:vertical { background: transparent; width: 3px; margin: 0; }'
+            'QScrollBar::handle:vertical { background: rgba(128, 128, 128, 120); '
+            'border-radius: 4px; min-height: 30px; }'
+            'QScrollBar::handle:vertical:hover { background: rgba(128, 128, 128, 200); }'
+            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }')
 
 
 # 漫画站点记录窗口
@@ -200,9 +193,13 @@ class WebsitWidget(QWidget):
 
         self.type = type
         self.vBoxLayout = QVBoxLayout(self)
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
+        self.vBoxLayout.setSpacing(10)
 
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(500)
+        self.lineEdit.setFixedHeight(40)
+        self.lineEdit.searchButton.setIconSize(QSize(14, 14))
         self.lineEdit.setPlaceholderText(name)
         self.lineEdit.searchSignal.connect(lambda text: self.search(text))
         self.lineEdit.textChanged.connect(lambda text: self.on_text_changed(text))
@@ -215,7 +212,7 @@ class WebsitWidget(QWidget):
         self.searchLayout.addWidget(self.lineEdit)
         if self.type == 1:
             self.addBtn = PrimaryToolButton(FluentIcon.ADD)
-            self.addBtn.setFixedSize(44, 33)
+            self.addBtn.setFixedSize(36, 36)
             self.addBtn.setToolTip('新增站点')
             self.addBtn.clicked.connect(self.addWebsite)
             self.searchLayout.addWidget(self.addBtn)
@@ -225,6 +222,7 @@ class WebsitWidget(QWidget):
         # 站点卡片容器：flowLayout 放入 flowContainer，再由 resultStack 与空状态切换
         self.flowContainer = QWidget(self)
         self.flowLayout = AutoFlowLayout(self.flowContainer)
+        self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.resultStack = QStackedWidget(self)
         self.resultStack.addWidget(self.flowContainer)  # 页0：站点卡片
         self.emptyWidget = EmptyStateWidget(FluentIcon.FOLDER, '没有站点请添加~', self)
@@ -330,7 +328,8 @@ class WebsitWidget(QWidget):
         avail = self.flowContainer.width() - fm.left() - fm.right()
         hs = self.flowLayout.horizontalSpacing()
         hs = hs if hs and hs > 0 else 10
-        card_w = max(int(avail / n) - hs, 100)
+        # 留 1px 余量，避免 AutoFlowLayout 换行判断把第 n 个卡片挤到下一行
+        card_w = max(int((avail - (n - 1) * hs - 1) / n), 100)
         for i in range(self.flowLayout.count()):
             item = self.flowLayout.itemAt(i)
             if item and item.widget():

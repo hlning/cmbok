@@ -10,12 +10,13 @@ from PyQt5.QtCore import Qt, QDir
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QFileSystemModel,
-    QWidget, QMessageBox, QHBoxLayout, QAction, QHeaderView
+    QWidget, QMessageBox, QHBoxLayout, QVBoxLayout, QLabel, QAction, QHeaderView
 )
 from qfluentwidgets import TreeView, FluentIcon, Action, RoundMenu, InfoBarIcon, InfoBarPosition, MessageBox, \
     MessageBoxBase, SubtitleLabel, LineEdit, CaptionLabel
 
 from common.config import cfg
+from common.style_sheet import StyleSheet
 from view.components.info_bar_tip import show_tip
 
 
@@ -45,7 +46,10 @@ class FileManagerInterface(QWidget):
         self.clipboard_type = None  # 用于区分复制和剪切
         self.tree_index = None
 
-        self.hBoxLayout = QHBoxLayout(self)
+        self.vBoxLayout = QVBoxLayout(self)
+        self.titleLabel = QLabel('📂文件管理', self)
+        self.titleLabel.setObjectName('viewTitleLabel')
+        self.vBoxLayout.addWidget(self.titleLabel)
 
         self.treeView = TreeView(self)
 
@@ -76,8 +80,10 @@ class FileManagerInterface(QWidget):
         self.treeView.setBorderVisible(True)
         self.treeView.setBorderRadius(8)
 
-        self.hBoxLayout.addWidget(self.treeView, 1)
-        self.hBoxLayout.setContentsMargins(50, 30, 50, 30)
+        self.vBoxLayout.addWidget(self.treeView, 1)
+        self.vBoxLayout.setContentsMargins(36, 20, 36, 15)
+        self.vBoxLayout.setSpacing(12)
+        StyleSheet.SAMPLE_CARD.apply(self)
 
     def contextMenuEvent(self, event):
         try:

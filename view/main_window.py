@@ -16,7 +16,7 @@ from qfluentwidgets import NavigationItemPosition, FluentWindow, SubtitleLabel, 
 from common.sqlite_util import SQLiteDatabase
 from common.signal_bus import signalBus
 from resource import resource
-from common.config import VERSION_NO, LOG_PATH, cfg, GITHUBURL, GITHUB_RELEASE_API, NOTIFICATION_URL
+from common.config import VERSION_NO, LOG_PATH, cfg, GITHUBURL, GITHUB_RELEASE_API, NOTIFICATION_URL, URL_CONFIG_URL
 from custom.my_fluent_icon import MyFluentIcon
 from utils.komga_utils import start_komga, stop_komga
 from utils.utils_files_and_folders import clean_file
@@ -82,6 +82,14 @@ class Window(FluentWindow):
         download_signals.success.connect(self._refreshAvatarDisplay)
         # 监听当前导航项变化的信号
         self.stackedWidget.currentChanged.connect(self.on_navigation_changed)
+        # 导航切换刷新防抖：连续切换只刷新最后一次，且延迟到切换过渡完成后刷新
+        self._navIndex = -1
+        self._navTimer = QTimer(self)
+        self._navTimer.setSingleShot(True)
+        self._navTimer.setInterval(150)
+        self._navTimer.timeout.connect(self._doNavRefresh)
+        # 禁用导航切换的弹出动画（原 300ms 位置动画在内容多时掉帧），改为瞬时切换
+        self.stackedWidget.setCurrentWidget = lambda widget, popOut=False: self.stackedWidget.view.setCurrentWidget(widget, duration=0)
         # 更新配置文件中的版本号
         cfg.set(cfg.version, VERSION_NO)
         # 配置日志记录
@@ -96,6 +104,8 @@ class Window(FluentWindow):
         self.splashScreen.finish()
         # 看是否有新版本或公告
         self.get_version()
+        # 从 GitHub 拉取最新的拷贝漫画/z-library 地址配置
+        self.check_url_config()
 
     # 运行komga
     def run_komga(self):
@@ -139,26 +149,49 @@ class Window(FluentWindow):
             logging.info(traceback.format_exc())
             logging.info('服务器已关闭')
 
+    # 检查地址配置（jsDelivr 拉取 url_config.json，更新 copy_url/zlibrary_url）
+    def check_url_config(self):
+        try:
+            response = requests.get(URL_CONFIG_URL, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                copy_url = data.get('copy_url')
+                zlibrary_url = data.get('zlibrary_url')
+                if copy_url and copy_url != cfg.get(cfg.copy_url):
+                    cfg.set(cfg.copy_url, copy_url)
+                if zlibrary_url and zlibrary_url != cfg.get(cfg.zlibrary_url):
+                    cfg.set(cfg.zlibrary_url, zlibrary_url)
+        except Exception:
+            logging.info('检查地址配置异常: ' + traceback.format_exc())
+
     # 监听侧边栏改变事件
     def on_navigation_changed(self, index):
-        if index == 0:
+        # 防抖：连续切换只保留最后一次，延迟到切换过渡完成后刷新
+        self._navIndex = index
+        self._navTimer.start(150)
+
+    def _doNavRefresh(self):
+        idx = self._navIndex
+        # 已切到其他页面则跳过，避免刷新非当前页造成卡顿
+        if self.stackedWidget.currentIndex() != idx:
+            return
+        if idx == 0:
             # 切回漫画搜索：重排卡片宽度自适应（窗口宽度可能已在其他界面变化）
-            QTimer.singleShot(0, self.comicInterface.refreshCards)
-        if index == 1:
-            QTimer.singleShot(0, self.bookInterface.refreshCards)
-        if index == 2:
-            # 默认更新站点记录
+            self.comicInterface.refreshCards()
+        elif idx == 1:
+            self.bookInterface.refreshCards()
+        elif idx == 2:
             self.websiteInterface.updateWebsiteRecords(1)
-            self.websiteInterface.updateWebsiteRecords(2)
-        if index == 4:
-            # 默认更新收藏记录
-            self.collectInterface.updateComicRecords(1)
-            self.collectInterface.updateComicRecords(2)
-        if index == 5:
-            # 默认更新下载记录
-            self.downloadInterface.updateComicRecords(1)
-            self.downloadInterface.updateComicRecords(2)
-            QTimer.singleShot(0, self.downloadInterface.refreshTableSize)
+        elif idx == 4:
+            # 仅在收藏数据变化（collectChanged 置脏）时刷新当前子界面
+            ci = self.collectInterface
+            i = ci.stackedWidget.currentIndex()
+            if getattr(ci, '_dirty', [False, False])[i]:
+                ci.updateComicRecords(i + 1)
+                ci._dirty[i] = False
+        elif idx == 5:
+            # 下载页只调整表格列宽，数据刷新由 downloadFinish 处理
+            self.downloadInterface.refreshTableSize()
 
     # 初始化侧边栏
     def initNavigation(self):

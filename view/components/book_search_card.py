@@ -4,7 +4,7 @@ import logging
 import math
 import traceback
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QSize
 from PyQt5.QtGui import QPixmap, QMovie, QPainter, QColor
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QStackedWidget
@@ -14,6 +14,7 @@ from qfluentwidgets import FlowLayout, CardWidget, ElevatedCardWidget, SearchLin
 
 from common.config import cfg
 from common.const import language_item
+from common.signal_bus import signalBus
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
@@ -75,12 +76,15 @@ class BookSearchCardView(QWidget):
         self.hBoxLayout1.setSpacing(6)
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(500)
+        self.lineEdit.setFixedHeight(40)
+        self.lineEdit.searchButton.setIconSize(QSize(14, 14))
         self.lineEdit.setPlaceholderText('请输入图书名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchBook(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
 
         # 重置按钮
         self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
+        self.resetBtn.setFixedHeight(36)
         self.resetBtn.clicked.connect(self.reset)
 
         self.hBoxLayout1.addStretch()
@@ -145,6 +149,8 @@ class BookSearchCardView(QWidget):
         self.pager = PaginationBar(parent=self)
         self.pager.pageChanged.connect(self.getBooks)
         self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setCurrentPageSize(cfg.get(cfg.bookPageSize))
+        self._pageSize = self.pager.page_sizes[self.pager.pageSizeBox.currentIndex()]
         self.pager.setVisible(False)
 
         # 搜索结果滚动区（搜索区固定顶部、分页固定底部，仅结果区滚动）
@@ -175,7 +181,8 @@ class BookSearchCardView(QWidget):
         self.resultStack.addWidget(self.emptyWidget)  # 页1：空状态
         self.resultStack.setCurrentWidget(self.emptyWidget)
 
-        self.vBoxLayout.setContentsMargins(15, 0, 36, 0)
+        # 左右边距与漫画搜索页面保持一致（36）
+        self.vBoxLayout.setContentsMargins(36, 0, 36, 24)
         self.vBoxLayout.setSpacing(10)
         self.flowLayout.setContentsMargins(0, 0, 0, 0)
         self.flowLayout.setHorizontalSpacing(12)
@@ -311,6 +318,7 @@ class BookSearchCardView(QWidget):
     # 每页条数变化
     def _onPageSizeChanged(self, size):
         self._pageSize = size
+        cfg.set(cfg.bookPageSize, size)
         if self.book_list:
             self.pager.setPage(0, math.ceil(self._total / self._pageSize), self._total)
             self.getBooks(0)
@@ -331,6 +339,10 @@ class BookSearchCardView(QWidget):
         # 窗口宽度变化时，已存在的搜索结果卡片跟随结果区宽度自适应（每行一条）
         if self.flowLayout.count() > 0:
             w = self._cardWidth()
+            # 宽度未变则跳过，避免切回导航时无意义重排引发卡顿
+            if w == getattr(self, '_lastCardWidth', None):
+                return
+            self._lastCardWidth = w
             for i in range(self.flowLayout.count()):
                 item = self.flowLayout.itemAt(i)
                 if item and item.widget():
@@ -518,6 +530,7 @@ class BookCard(ElevatedCardWidget):
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.book_id, 'type': 2})
                 self.is_collect = False
                 show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent(), InfoBarPosition.TOP)
+            signalBus.collectChanged.emit()
         except Exception:
             show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
             sqlite_util.rollback()

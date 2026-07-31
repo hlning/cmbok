@@ -5,15 +5,16 @@ import math
 import traceback
 from uuid import uuid1
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QMimeData, QPoint, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QMimeData, QPoint, QTimer, QSize
 from PyQt5.QtGui import QPixmap, QMovie, QColor, QDrag
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QApplication
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QApplication, QFrame
 from qfluentwidgets import ScrollArea, CardWidget, ElevatedCardWidget, BodyLabel, CaptionLabel, \
     FlowLayout, SearchLineEdit, SegmentedToolWidget, TransparentToolButton, FluentIcon, InfoBarPosition, Flyout, \
     FlyoutAnimationType, InfoBarIcon, PipsPager, PipsScrollButtonDisplayMode, RoundMenu, Action, MessageBoxBase, \
     SubtitleLabel, LineEdit, MessageBox, BreadcrumbBar, setFont
 
+from common.signal_bus import signalBus
 from common.sqlite_util import SQLiteDatabase
 from common.config import cfg
 from common.style_sheet import StyleSheet
@@ -37,6 +38,9 @@ class CollectInterface(QWidget):
         self.pivot = SegmentedToolWidget(self)
         self.stackedWidget = QStackedWidget(self)
 
+        self.titleLabel = QLabel('⭐我的收藏', self)
+        self.titleLabel.setObjectName('viewTitleLabel')
+
         self.hBoxLayout = QHBoxLayout()
         self.vBoxLayout = QVBoxLayout(self)
 
@@ -51,16 +55,32 @@ class CollectInterface(QWidget):
         self.addSubInterface(self.bookAreaInterface, '图书', MyFluentIcon.BOOK)
 
         self.hBoxLayout.addWidget(self.pivot, 0, Qt.AlignCenter)
+        self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addLayout(self.hBoxLayout)
         self.vBoxLayout.addWidget(self.stackedWidget)
-        self.vBoxLayout.setContentsMargins(30, 10, 30, 30)
+        self.vBoxLayout.setContentsMargins(36, 20, 36, 15)
+        self.vBoxLayout.setSpacing(12)
+        StyleSheet.SAMPLE_CARD.apply(self)
 
         self.stackedWidget.setCurrentWidget(self.collectAreaInterface)
         self.pivot.setCurrentItem(self.collectAreaInterface.objectName())
         self.pivot.currentItemChanged.connect(
             lambda k: self.stackedWidget.setCurrentWidget(self.findChild(QWidget, k)))
 
-        self.stackedWidget.currentChanged.connect(lambda index: self.updateComicRecords(index + 1))
+        self.stackedWidget.currentChanged.connect(self._onSubInterfaceChanged)
+        # 搜索页收藏/取消收藏后置脏，切回收藏页时按需刷新（不立即刷新）
+        # _dirty[0]=漫画子界面, _dirty[1]=图书子界面；初始 False（CollectWidget.__init__ 已首次加载）
+        self._dirty = [False, False]
+        signalBus.collectChanged.connect(self._onCollectChanged)
+
+    def _onSubInterfaceChanged(self, index):
+        # 仅在该子界面数据变化（置脏）时刷新，避免每次切换都重建卡片
+        if self._dirty[index]:
+            self.updateComicRecords(index + 1)
+            self._dirty[index] = False
+
+    def _onCollectChanged(self):
+        self._dirty = [True, True]
 
     def addSubInterface(self, widget: QLabel, objectName, icon):
         widget.setObjectName(objectName)
@@ -106,12 +126,23 @@ class CollectAreaInterface(ScrollArea):
         self.setObjectName('collectInterface')
         StyleSheet.COMIC_INTERFACE.apply(self)
 
+        self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.vBoxLayout.addWidget(self.banner)
         self.vBoxLayout.setAlignment(Qt.AlignTop)
+
+        # 透明滚动条，避免占用右侧边距（与漫画搜索 resultScrollArea 一致）
+        self.verticalScrollBar().setStyleSheet(
+            'QScrollBar:vertical { background: transparent; width: 3px; margin: 0; }'
+            'QScrollBar::handle:vertical { background: rgba(128, 128, 128, 120); '
+            'border-radius: 4px; min-height: 30px; }'
+            'QScrollBar::handle:vertical:hover { background: rgba(128, 128, 128, 200); }'
+            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }')
 
 
 # 漫画收藏记录窗口
@@ -128,6 +159,8 @@ class CollectWidget(QWidget):
         # 搜索框
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(500)
+        self.lineEdit.setFixedHeight(40)
+        self.lineEdit.searchButton.setIconSize(QSize(14, 14))
         self.lineEdit.setPlaceholderText(name)
         self.lineEdit.searchSignal.connect(lambda text: self.search(text))
         self.lineEdit.textChanged.connect(lambda text: self.on_text_changed(text))
@@ -152,13 +185,15 @@ class CollectWidget(QWidget):
         self.vBoxLayout.addWidget(self.resultStack, 1)
 
         # 分页组件
-        self._pageSize = 16
+        self._pageSize = 15
         self._searchText = None
         self._pageCount = 1
         self._total = 0
-        self.pager = PaginationBar([16, 32], self)
+        self.pager = PaginationBar([15, 30, 45], self)
         self.pager.pageChanged.connect(self.getRecords)
         self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setCurrentPageSize(cfg.get(cfg.collectPageSize))
+        self._pageSize = self.pager.page_sizes[self.pager.pageSizeBox.currentIndex()]
         self.setPage(None)
 
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter)
@@ -225,6 +260,7 @@ class CollectWidget(QWidget):
     # 每页条数变化
     def _onPageSizeChanged(self, size):
         self._pageSize = size
+        cfg.set(cfg.collectPageSize, size)
         self.setPage(self._searchText)
 
     # 流动布局
@@ -261,14 +297,22 @@ class CollectWidget(QWidget):
         n = 3
         fm = self.flowLayout.contentsMargins()
         avail = self.flowContainer.width() - fm.left() - fm.right()
+        if avail <= 0:
+            return  # 容器宽度未定（如首次隐藏），跳过避免卡片宽度退化到 100
         hs = self.flowLayout.horizontalSpacing()
         hs = hs if hs and hs > 0 else 10
-        card_w = max(int(avail / n) - hs, 100)
+        # 留 1px 余量，避免 FlowLayout 换行判断把第 n 个卡片挤到下一行
+        card_w = max(int((avail - (n - 1) * hs - 1) / n), 100)
         for i in range(self.flowLayout.count()):
             item = self.flowLayout.itemAt(i)
             if item and item.widget():
                 item.widget().setFixedWidth(card_w)
         self.flowLayout.invalidate()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 切换导航 show 不一定触发 resizeEvent，显示时主动重排一次确保每行 3 个
+        QTimer.singleShot(0, self._layoutCards)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -371,7 +415,7 @@ class CollectCard(ElevatedCardWidget):
         self.contentLabel.setToolTip(author)
 
         self.hBoxLayout = QHBoxLayout(self)
-        self.setFixedWidth(385)
+        self.setFixedWidth(300)
         self.vBoxLayout = QVBoxLayout()
 
         self.setFixedHeight(73)
@@ -504,7 +548,9 @@ class CollectCard(ElevatedCardWidget):
         with SQLiteDatabase() as db:
             # 取消收藏
             db.delete_data('cmbok_collection_record', {'key': key, 'type': type})
-        # 向上找到 CollectWidget 再刷新（CollectCard 直接父是 flowContainer，没有 search 方法）
+        # 立即清除 hover 阴影 effect，避免卡片删除前阴影残留到鼠标移开
+        self.setGraphicsEffect(None)
+        # 向上找到 CollectWidget 重新加载数据（重建卡片）
         target = None
         p = self.parent()
         while p is not None:

@@ -5,6 +5,7 @@ Zlibrary 客户端 - 迁移自后台 pear-admin-flask 的 applications/service/Z
 域名改为国内可访问的 zh.kid1412.by，并新增 getDownloadLink 供流式下载使用。
 """
 import requests
+from urllib.parse import urlparse
 
 from common.config import cfg
 
@@ -69,23 +70,47 @@ class Zlibrary:
     def loginWithToken(self, remix_userid, remix_userkey: str):
         return self.__checkIDandKey(remix_userid, remix_userkey)
 
-    def __makePostRequest(self, url: str, data: dict = None, override=False):
+    def __makePostRequest(self, url: str, data: dict = None, override=False, _followed=False):
         if not self.isLoggedIn() and override is False:
             return {"success": False, "error": "Not logged in"}
         try:
-            return requests.post("https://" + self.__domain + url, data=data or {},
+            resp = requests.post("https://" + self.__domain + url, data=data or {},
                                  cookies=self.__cookies, headers=self.__headers,
-                                 timeout=self.__timeout).json()
+                                 timeout=self.__timeout, allow_redirects=False)
+            # 重定向到新域名：更新域名并持久化，用新域名重试原请求（仅重试一次防循环）
+            if resp.status_code in (301, 302, 303, 307, 308) and not _followed:
+                new_domain = self.__extractDomain(resp.headers.get('Location'))
+                if new_domain and new_domain != self.__domain:
+                    self.__domain = new_domain
+                    cfg.set(cfg.zlibrary_url, new_domain)
+                    return self.__makePostRequest(url, data, override, _followed=True)
+            return resp.json()
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def __makeGetRequest(self, url: str, params: dict = None, cookies=None):
+    def __extractDomain(self, location):
+        """从重定向 Location 提取域名；相对路径或空则返回 None"""
+        if not location:
+            return None
+        netloc = urlparse(location).netloc
+        return netloc or None
+
+    def __makeGetRequest(self, url: str, params: dict = None, cookies=None, _followed=False):
         if not self.isLoggedIn() and cookies is None:
             return {"success": False, "error": "Not logged in"}
         try:
-            return requests.get("https://" + self.__domain + url, params=params or {},
+            resp = requests.get("https://" + self.__domain + url, params=params or {},
                                 cookies=self.__cookies if cookies is None else cookies,
-                                headers=self.__headers, timeout=self.__timeout).json()
+                                headers=self.__headers, timeout=self.__timeout,
+                                allow_redirects=False)
+            # 重定向到新域名：更新域名并持久化，用新域名重试原请求（仅重试一次防循环）
+            if resp.status_code in (301, 302, 303, 307, 308) and not _followed:
+                new_domain = self.__extractDomain(resp.headers.get('Location'))
+                if new_domain and new_domain != self.__domain:
+                    self.__domain = new_domain
+                    cfg.set(cfg.zlibrary_url, new_domain)
+                    return self.__makeGetRequest(url, params, cookies, _followed=True)
+            return resp.json()
         except Exception as e:
             return {"success": False, "error": str(e)}
 

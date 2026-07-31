@@ -4,9 +4,9 @@ import math
 import os
 import traceback
 
-from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject, QTimer
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject, QTimer, QSize
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QHeaderView
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QHeaderView, QFrame
 from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
     TableWidget, RoundMenu, Action, ProgressRing, PrimaryToolButton
 
@@ -50,6 +50,9 @@ class DownloadInterface(QWidget):
         self.pivot = SegmentedToolWidget(self)
         self.stackedWidget = QStackedWidget(self)
 
+        self.titleLabel = QLabel('⬇️我的下载', self)
+        self.titleLabel.setObjectName('viewTitleLabel')
+
         self.hBoxLayout = QHBoxLayout()
         self.vBoxLayout = QVBoxLayout(self)
 
@@ -65,9 +68,12 @@ class DownloadInterface(QWidget):
         self.addSubInterface(self.bookAreaInterface, '图书', MyFluentIcon.BOOK)
 
         self.hBoxLayout.addWidget(self.pivot, 0, Qt.AlignCenter)
+        self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addLayout(self.hBoxLayout)
         self.vBoxLayout.addWidget(self.stackedWidget)
-        self.vBoxLayout.setContentsMargins(30, 10, 30, 30)
+        self.vBoxLayout.setContentsMargins(36, 20, 36, 15)
+        self.vBoxLayout.setSpacing(12)
+        StyleSheet.SAMPLE_CARD.apply(self)
 
         self.stackedWidget.setCurrentWidget(self.comicAreaInterface)
         self.pivot.setCurrentItem(self.comicAreaInterface.objectName())
@@ -128,12 +134,23 @@ class DownloadAreaInterface(ScrollArea):
         self.setObjectName('comicDownloadInterface')
         StyleSheet.COMIC_INTERFACE.apply(self)
 
+        self.setFrameShape(QFrame.NoFrame)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setWidget(self.view)
         self.setWidgetResizable(True)
 
+        self.vBoxLayout.setContentsMargins(0, 0, 0, 0)
         self.vBoxLayout.addWidget(self.banner)
         self.vBoxLayout.setAlignment(Qt.AlignTop)
+
+        # 透明滚动条，避免占用右侧边距（与漫画搜索 resultScrollArea 一致）
+        self.verticalScrollBar().setStyleSheet(
+            'QScrollBar:vertical { background: transparent; width: 3px; margin: 0; }'
+            'QScrollBar::handle:vertical { background: rgba(128, 128, 128, 120); '
+            'border-radius: 4px; min-height: 30px; }'
+            'QScrollBar::handle:vertical:hover { background: rgba(128, 128, 128, 200); }'
+            'QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }'
+            'QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }')
 
 
 # 下载记录窗口
@@ -143,9 +160,12 @@ class DownloadWidget(QWidget):
 
         self.type = type
         self.vBoxLayout = QVBoxLayout(self)
+        self.vBoxLayout.setSpacing(14)
 
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(500)
+        self.lineEdit.setFixedHeight(40)
+        self.lineEdit.searchButton.setIconSize(QSize(14, 14))
         self.lineEdit.setPlaceholderText(name)
         self.lineEdit.searchSignal.connect(lambda text: self.search(text))
         self.lineEdit.textChanged.connect(lambda text: self.on_text_changed(text))
@@ -228,6 +248,8 @@ class DownloadWidget(QWidget):
         self.pager = PaginationBar([10, 20, 30], self)
         self.pager.pageChanged.connect(self.getRecords)
         self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setCurrentPageSize(cfg.get(cfg.downloadPageSize))
+        self._pageSize = self.pager.page_sizes[self.pager.pageSizeBox.currentIndex()]
         self.setPage(None)
 
         self.vBoxLayout.addWidget(self.pager, alignment=Qt.AlignCenter)
@@ -499,6 +521,7 @@ class DownloadWidget(QWidget):
     # 每页条数变化
     def _onPageSizeChanged(self, size):
         self._pageSize = size
+        cfg.set(cfg.downloadPageSize, size)
         self.setPage(self._searchText)
 
     def createRing(self, process):

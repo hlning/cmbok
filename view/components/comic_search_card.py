@@ -3,7 +3,7 @@ import logging
 import math
 import traceback
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QSize
 from PyQt5.QtGui import QColor, QPixmap, QMovie, QDesktopServices
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget, QScrollArea
@@ -12,6 +12,8 @@ from qfluentwidgets import TextWrap, FlowLayout, CardWidget, ElevatedCardWidget,
     CheckBox, FlyoutViewBase, BodyLabel, PrimaryPushButton, FlyoutAnimationType, SegmentedWidget, \
     SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog, IndeterminateProgressBar
 
+from common.config import cfg
+from common.signal_bus import signalBus
 from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
@@ -33,12 +35,15 @@ class ComicSearchCardView(QWidget):
         self.titleLabel = QLabel(title, self)
         self.lineEdit = SearchLineEdit()
         self.lineEdit.setFixedWidth(500)
+        self.lineEdit.setFixedHeight(40)
+        self.lineEdit.searchButton.setIconSize(QSize(14, 14))
         self.lineEdit.setPlaceholderText('请输入漫画名')
         self.lineEdit.searchSignal.connect(lambda text: self.searchComic(text, 0))
         self.lineEdit.returnPressed.connect(self.enter)
 
         # 重置按钮
         self.resetBtn = PrimaryPushButton(FluentIcon.SYNC, '重置')
+        self.resetBtn.setFixedHeight(36)
         self.resetBtn.clicked.connect(self.reset)
 
         self.comic_list = []
@@ -53,6 +58,8 @@ class ComicSearchCardView(QWidget):
         self.pager = PaginationBar([9, 27], self)
         self.pager.pageChanged.connect(self.getComics)
         self.pager.pageSizeChanged.connect(self._onPageSizeChanged)
+        self.pager.setCurrentPageSize(cfg.get(cfg.comicPageSize))
+        self._pageSize = self.pager.page_sizes[self.pager.pageSizeBox.currentIndex()]
         self.pager.setVisible(False)
 
         self.vBoxLayout = QVBoxLayout(self)
@@ -215,6 +222,7 @@ class ComicSearchCardView(QWidget):
     # 每页条数变化
     def _onPageSizeChanged(self, size):
         self._pageSize = size
+        cfg.set(cfg.comicPageSize, size)
         if self.comic_list:
             self.pager.setPage(0, math.ceil(self._total / self._pageSize), self._total)
             self.getComics(0)
@@ -231,6 +239,10 @@ class ComicSearchCardView(QWidget):
         # 仅调整已有卡片宽度，不重建卡片（重建会逐张查库判收藏+发网络图片请求，卡顿）
         if self.flowLayout.count() > 0:
             w = self._cardWidth()
+            # 宽度未变则跳过，避免切回导航时无意义重排引发卡顿
+            if w == getattr(self, '_lastCardWidth', None):
+                return
+            self._lastCardWidth = w
             for i in range(self.flowLayout.count()):
                 item = self.flowLayout.itemAt(i)
                 if item and item.widget():
@@ -394,6 +406,7 @@ class ComicCard(ElevatedCardWidget):
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.path_word, 'type': 1})
                 self.is_collect = False
                 show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent())
+            signalBus.collectChanged.emit()
         except Exception:
             show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
             sqlite_util.rollback()
