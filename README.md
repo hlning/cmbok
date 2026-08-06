@@ -1,6 +1,6 @@
 # ⚡ Cmbok，一款免费开源的漫画、图书下载软件 ⚡
 ## ❤ 这是我自从买了一台kindle之后，感觉找漫画和图书很麻烦，自己开发的下载软件
-### 最新123网盘下载地址：https://1812475725.share.123pan.cn/123pan/GSy8Vv-DupEv
+### 下载地址：https://bluemood.xiaomy.net/
 
 ## 📑 目录
 
