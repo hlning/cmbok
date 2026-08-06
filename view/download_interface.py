@@ -7,7 +7,7 @@ import traceback
 from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QObject, QTimer, QSize
 from PyQt5.QtGui import QColor, QBrush, QDesktopServices
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QTableWidgetItem, QHeaderView, QFrame
-from qfluentwidgets import ScrollArea, SearchLineEdit, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
+from qfluentwidgets import ScrollArea, SegmentedToolWidget, FluentIcon, InfoBarPosition, InfoBarIcon, \
     TableWidget, RoundMenu, Action, ProgressRing, PrimaryToolButton
 
 from common.config import cfg
@@ -17,6 +17,7 @@ from custom.my_fluent_icon import MyFluentIcon
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
 from view.components.empty_state_widget import EmptyStateWidget
+from view.components.history_search_line_edit import HistorySearchLineEdit
 
 
 # 定义全局信号槽类
@@ -162,7 +163,7 @@ class DownloadWidget(QWidget):
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setSpacing(14)
 
-        self.lineEdit = SearchLineEdit()
+        self.lineEdit = HistorySearchLineEdit(cfg.download_search_history)
         self.lineEdit.setFixedWidth(500)
         self.lineEdit.setFixedHeight(40)
         self.lineEdit.searchButton.setIconSize(QSize(14, 14))

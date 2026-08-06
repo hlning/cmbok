@@ -1,10 +1,10 @@
 # coding:utf-8
+import hashlib
 import logging
 import time
 import traceback
 from pathlib import Path
 
-import requests
 from PyQt5.QtCore import Qt, QSize, QUrl, QTimer
 from PyQt5.QtGui import QIcon, QImage, QDesktopServices
 from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication, QDesktopWidget
@@ -16,13 +16,15 @@ from qfluentwidgets import NavigationItemPosition, FluentWindow, SubtitleLabel, 
 from common.sqlite_util import SQLiteDatabase
 from common.signal_bus import signalBus
 from resource import resource
-from common.config import VERSION_NO, LOG_PATH, cfg, GITHUBURL, GITHUB_RELEASE_API, NOTIFICATION_URL, URL_CONFIG_URL
+from common.config import VERSION_NO, LOG_PATH, cfg
+from service.startup_check_service import StartupCheckThread
 from custom.my_fluent_icon import MyFluentIcon
 from utils.komga_utils import start_komga, stop_komga
 from utils.utils_files_and_folders import clean_file
 from view.book_interface import BookInterface
 from view.components.account_avatar_widget import AccountAvatarWidget
 from view.components.zlibrary_login_dialog import ZlibraryLoginDialog
+from view.components.update_dialog import show_new_version_dialog
 from view.collect_interface import CollectInterface
 from view.comic_interface import ComicInterface
 from view.components.info_bar_tip import show_tip
@@ -102,10 +104,14 @@ class Window(FluentWindow):
         time.sleep(0.5)
         # 隐藏启动页面
         self.splashScreen.finish()
-        # 看是否有新版本或公告
-        self.get_version()
-        # 从 GitHub 拉取最新的拷贝漫画/z-library 地址配置
-        self.check_url_config()
+        # 启动检测（版本/公告/地址配置）放后台线程异步执行，不阻塞主线程；
+        # 检测完成后通过信号回主线程提示/更新配置。持有引用避免运行中线程被 GC
+        self._startupCheckThread = StartupCheckThread(self)
+        self._startupCheckThread.versionFound.connect(self._onVersionFound)
+        self._startupCheckThread.notificationReady.connect(self._onNotificationReady)
+        self._startupCheckThread.urlConfigUpdated.connect(self._onUrlConfigUpdated)
+        self._startupCheckThread.zlibraryUnavailable.connect(self._onZlibraryUnavailable)
+        self._startupCheckThread.start()
 
     # 运行komga
     def run_komga(self):
@@ -115,54 +121,40 @@ class Window(FluentWindow):
         if cfg.get(cfg.isRunKomga):
             start_komga()
 
-    # 检查版本（GitHub Releases）
-    def get_version(self):
-        try:
-            if cfg.get(cfg.checkUpdateAtStartUp):
-                response = requests.get(GITHUB_RELEASE_API, timeout=10)
-                if response.status_code == 200:
-                    release = response.json()
-                    tag = release.get('tag_name', '')
-                    if tag and tag != cfg.get(cfg.version):
-                        body = release.get('body') or '发现新版本，是否前往下载？'
-                        html_url = release.get('html_url') or GITHUBURL
-                        w = MessageBox("检测到新版本，是否更新？", body, self.window())
-                        if w.exec():
-                            QDesktopServices.openUrl(QUrl(html_url))
-                        return
-            # 无新版本/未开启检测/请求失败：显示公告
-            self.get_notification()
-        except Exception:
-            logging.info(traceback.format_exc())
-            self.get_notification()
+    # 发现新版本：弹框询问是否前往下载
+    def _onVersionFound(self, tag, body, html_url):
+        show_new_version_dialog(self.window(), body, html_url)
 
-    # 检查公告（jsDelivr 拉取仓库 notification.json）
-    def get_notification(self):
-        try:
-            response = requests.get(NOTIFICATION_URL, timeout=10)
-            if response.status_code == 200:
-                notification = response.json().get('notification', '')
-                if notification:
-                    show_tip(InfoBarIcon.INFORMATION, '公告信息', notification, self,
-                             InfoBarPosition.TOP, duration=15 * 1000)
-        except Exception:
-            logging.info(traceback.format_exc())
-            logging.info('服务器已关闭')
+    # 公告检测完成：有内容则顶部 InfoBar 提示
+    # 仅用户主动点 X 关闭才记录为已读，下次启动同内容不再弹；
+    # 15s 自动消失不记录，下次仍会提示
+    def _onNotificationReady(self, notification):
+        if not notification:
+            return
+        nid = hashlib.md5(notification.encode('utf-8')).hexdigest()
+        if nid == cfg.get(cfg.lastNotificationId):
+            return  # 该公告用户已主动关闭过，不再重复弹出
+        bar = show_tip(InfoBarIcon.INFORMATION, '公告信息', notification, self,
+                       InfoBarPosition.TOP, duration=15 * 1000)
+        # 仅用户主动点 X 关闭才记录已读；15s 自动消失不记录，下次仍提示
+        bar.closeButton.clicked.connect(lambda *args: self._markNotificationRead(nid))
 
-    # 检查地址配置（jsDelivr 拉取 url_config.json，更新 copy_url/zlibrary_url）
-    def check_url_config(self):
-        try:
-            response = requests.get(URL_CONFIG_URL, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                copy_url = data.get('copy_url')
-                zlibrary_url = data.get('zlibrary_url')
-                if copy_url and copy_url != cfg.get(cfg.copy_url):
-                    cfg.set(cfg.copy_url, copy_url)
-                if zlibrary_url and zlibrary_url != cfg.get(cfg.zlibrary_url):
-                    cfg.set(cfg.zlibrary_url, zlibrary_url)
-        except Exception:
-            logging.info('检查地址配置异常: ' + traceback.format_exc())
+    # 用户主动关闭公告：记录已读标识，下次启动不再弹同一条
+    def _markNotificationRead(self, nid):
+        cfg.set(cfg.lastNotificationId, nid)
+
+    # 地址配置检测完成：更新 copy_url/zlibrary_url
+    def _onUrlConfigUpdated(self, updates):
+        if updates.get('copy_url'):
+            cfg.set(cfg.copy_url, updates['copy_url'])
+        if updates.get('zlibrary_url'):
+            cfg.set(cfg.zlibrary_url, updates['zlibrary_url'])
+
+    # zlibrary_url 本地与云端候选全部不可用：提示图书功能受限（不拦截搜索，仅提示）
+    def _onZlibraryUnavailable(self):
+        show_tip(InfoBarIcon.WARNING, '图书功能受限',
+                 '图书搜索/下载暂不可用，请等待恢复后再重试~', self,
+                 InfoBarPosition.TOP, duration=-1)
 
     # 监听侧边栏改变事件
     def on_navigation_changed(self, index):
@@ -197,7 +189,7 @@ class Window(FluentWindow):
     def initNavigation(self):
         self.addSubInterface(self.comicInterface, MyFluentIcon.COMIC, '漫画')
         self.addSubInterface(self.bookInterface, MyFluentIcon.BOOK, '图书')
-        self.addSubInterface(self.websiteInterface, MyFluentIcon.WEBSITE, '网站')
+        self.addSubInterface(self.websiteInterface, MyFluentIcon.WEBSITE, '站点')
         self.navigationInterface.addItem(
             routeKey='Komga',
             icon=MyFluentIcon.KOGMA,

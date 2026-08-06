@@ -67,10 +67,11 @@ class BannerWidget(QWidget):
 
         self.galleryLabel.setObjectName('galleryLabel')
 
-        self.vBoxLayout.setSpacing(0)
+        self.vBoxLayout.setSpacing(10)
         self.vBoxLayout.setContentsMargins(0, 20, 0, 0)
         self.vBoxLayout.addWidget(self.galleryLabel)
-        self.vBoxLayout.addWidget(self.linkCardView, 1, Qt.AlignBottom)
+        # 不用 AlignBottom：否则卡片视图被推到 BannerWidget 底部，与上方标题之间留出大段空白
+        self.vBoxLayout.addWidget(self.linkCardView, 1)
         self.vBoxLayout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         self.linkCardView.addCard(

@@ -15,3 +15,4 @@ def show_tip(info_bar_icon, title, content, parent, position=InfoBarPosition.TOP
         parent=parent
     )
     w.show()
+    return w

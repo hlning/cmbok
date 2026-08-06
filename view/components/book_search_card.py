@@ -8,7 +8,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QSize
 from PyQt5.QtGui import QPixmap, QMovie, QPainter, QColor
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea, QFrame, QStackedWidget
-from qfluentwidgets import FlowLayout, CardWidget, ElevatedCardWidget, SearchLineEdit, StateToolTip, \
+from qfluentwidgets import FlowLayout, CardWidget, ElevatedCardWidget, StateToolTip, \
     FluentIcon, TransparentToolButton, BodyLabel, InfoBarPosition, InfoBarIcon, \
     CaptionLabel, MessageBoxBase, ComboBox, PrimaryPushButton, PushButton, MessageBox, isDarkTheme
 
@@ -25,6 +25,7 @@ from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
 from view.components.empty_state_widget import EmptyStateWidget
+from view.components.history_search_line_edit import HistorySearchLineEdit
 
 
 class ElideLabel(QLabel):
@@ -74,7 +75,7 @@ class BookSearchCardView(QWidget):
         # 搜索输入框
         self.hBoxLayout1 = QHBoxLayout()
         self.hBoxLayout1.setSpacing(6)
-        self.lineEdit = SearchLineEdit()
+        self.lineEdit = HistorySearchLineEdit(cfg.book_search_history)
         self.lineEdit.setFixedWidth(500)
         self.lineEdit.setFixedHeight(40)
         self.lineEdit.searchButton.setIconSize(QSize(14, 14))
@@ -251,6 +252,14 @@ class BookSearchCardView(QWidget):
             self.stateTooltip.setTitle('加载失败')
             if status == 'fail':
                 self.stateTooltip.setContent('网络异常，o(╥﹏╥)o')
+            elif status == 'unavailable':
+                self.stateTooltip.setContent('图书功能暂不可用，请等待恢复~')
+                self.pager.setVisible(False)
+                self.emptyWidget.setIcon(FluentIcon.CANCEL)
+                self.emptyWidget.setText('图书功能暂不可用，请等待恢复~')
+                self.resultStack.setCurrentWidget(self.emptyWidget)
+            elif status == 'rate_limited':
+                self.stateTooltip.setContent('请求过于频繁，请稍候再试 (＞﹏＜)')
             elif status == 'timeout':
                 self.stateTooltip.setContent('请求超时了，(。・＿・。)ﾉI’m sorry~')
             elif status == 'error':

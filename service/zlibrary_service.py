@@ -22,6 +22,10 @@ class ZlibraryLogin(QThread):
     def run(self):
         try:
             Z = Zlibrary(email=self.email, password=self.password)
+            # 地址不可用（404）：提示图书功能暂不可用，区别于密码错误的「登录失败」
+            if Z.isUnavailable():
+                self.success.emit('unavailable', None)
+                return
             if Z.isLoggedIn():
                 remix_userid, remix_userkey = Z.getRemixToken()
                 cfg.set(cfg.zlibrary_email, self.email)

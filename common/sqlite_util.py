@@ -91,10 +91,15 @@ class SQLiteDatabase:
                           {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
                            'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
                            'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
-                           'img_dom': 'TEXT', 'use_frame': 'INTEGER', 'img_attr': 'TEXT', 'img_script': 'TEXT'})
+                           'img_dom': 'TEXT', 'use_frame': 'INTEGER', 'img_attr': 'TEXT', 'img_script': 'TEXT',
+                           'chapter_order': 'INTEGER', 'scroll_to_load': 'INTEGER'})
 
-        # ===== 数据迁移：重置 comic_website 为默认站点（每次 init 清空并重建，保证配置为最新默认值）=====
-        self._reseed_comic_website()
+        # 回填 chapter_order/scroll_to_load 默认值，保证老库升级后行为不变
+        self.cursor.execute("UPDATE comic_website SET chapter_order = 1 WHERE chapter_order IS NULL")
+        self.cursor.execute("UPDATE comic_website SET scroll_to_load = 1 WHERE scroll_to_load IS NULL")
+
+        # ===== 数据迁移：合并默认站点到 comic_website（按 name 补缺，已存在/用户自定义站点保留）=====
+        self._merge_default_comic_website()
 
         # 清理无用遗留表（旧版本残留，代码已不再使用）
         self.cursor.execute('DROP TABLE IF EXISTS comic_mangacopy_history')
@@ -116,8 +121,8 @@ class SQLiteDatabase:
         else:
             return False
 
-    def _reseed_comic_website(self):
-        """每次 db init 清空 comic_website 并重置为默认站点列表。"""
+    def _merge_default_comic_website(self):
+        """每次 db init 按 name 合并默认站点：库里缺的默认站点补进去，已存在（含用户改过的）与用户自定义站点一律保留。"""
         # 默认站点（参考油猴脚本 getImgs 配置；use_frame=1 走独立取图窗口，img_script 为取图JS片段）
         default_sites = [
             {'name': '来漫画', 'icon': 'https://www.comemh8.com/template/skin4_20110501/images/logo.png',
@@ -125,28 +130,36 @@ class SQLiteDatabase:
              'comic_name_dom': '.intro_l .title h1', 'comic_author_dom': '',
              'chapter_name_dom': '.plist.pnormal ul li a', 'chapter_link_dom': '.plist.pnormal ul a',
              'img_dom': '.img-box.J_shareContent img', 'use_frame': 1, 'img_attr': '',
-             'img_script': 'var w = ifr.contentWindow; var h = w.gethost(); return w.getUrlpics().map(function(e){ return h + e; });'},
+             'img_script': '',
+             'chapter_order': 1, 'scroll_to_load': 1},
             {'name': '再漫画', 'icon': 'https://manhua.zaimanhua.com/_nuxt/zmh-logo.d5f02b77.png',
              'url': 'https://manhua.zaimanhua.com/', 'comic_cover_dom': '',
              'comic_name_dom': '.wrap_intro_l_comic h1 a', 'comic_author_dom': '',
              'chapter_name_dom': '.tab-content-selected a', 'chapter_link_dom': '.tab-content-selected a',
-             'img_dom': '', 'use_frame': 0, 'img_attr': '', 'img_script': ''},
+             'img_dom': '', 'use_frame': 0, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
             {'name': '咚漫', 'icon': 'https://cdn-static.dongmanmanhua.cn/image/pc/newLogo/home_papge_logo_120.png',
              'url': 'https://www.dongmanmanhua.cn/', 'comic_cover_dom': '',
              'comic_name_dom': 'h1.subj', 'comic_author_dom': '',
              'chapter_name_dom': '#_listUl .subj span', 'chapter_link_dom': '#_listUl a',
-             'img_dom': '#_imageList img', 'use_frame': 0, 'img_attr': 'data-url', 'img_script': ''},
+             'img_dom': '#_imageList img', 'use_frame': 0, 'img_attr': 'data-url', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
             {'name': 'MYCOMIC', 'icon': '', 'url': 'https://mycomic.com/cn', 'comic_cover_dom': '',
              'comic_name_dom': '.truncate.whitespace-nowrap', 'comic_author_dom': '',
              'chapter_name_dom': '.mt-8.mb-12 a', 'chapter_link_dom': '.mt-8.mb-12 a',
-             'img_dom': '.-mx-6 img', 'use_frame': 1, 'img_attr': '', 'img_script': ''},
+             'img_dom': '.-mx-6 img', 'use_frame': 1, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
+            {'name': '拷贝漫画', 'icon': '', 'url': 'https://www.copy3000.com/', 'comic_cover_dom': '',
+             'comic_name_dom': '.col-9.comicParticulars-title-right h6', 'comic_author_dom': '',
+             'chapter_name_dom': '.tab-pane.fade.show.active a', 'chapter_link_dom': '.tab-pane.fade.show.active a',
+             'img_dom': '.comicContent-list img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'scroll_to_load': 0},
         ]
         try:
-            self.delete_all_data('comic_website')
             for site in default_sites:
+                # 同名站点已存在（含用户修改过的）则跳过，保留用户数据；仅补入库里缺的默认站点
+                if self.query_first_data('comic_website', {'name': site['name']}):
+                    continue
                 self.insert_data('comic_website', site)
         except Exception:
-            logging.info('重置 comic_website 失败: ' + traceback.format_exc())
+            logging.info('合并默认 comic_website 失败: ' + traceback.format_exc())
 
     def column_exists(self, table_name, column_name):
         # 执行 PRAGMA table_info 查询以获取表的字段信息

@@ -7,7 +7,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QSize
 from PyQt5.QtGui import QColor, QPixmap, QMovie, QDesktopServices
 from PyQt5.QtNetwork import QNetworkRequest, QNetworkAccessManager
 from PyQt5.QtWidgets import QWidget, QFrame, QLabel, QVBoxLayout, QHBoxLayout, QStackedWidget, QScrollArea
-from qfluentwidgets import TextWrap, FlowLayout, CardWidget, ElevatedCardWidget, SearchLineEdit, StateToolTip, \
+from qfluentwidgets import TextWrap, FlowLayout, CardWidget, ElevatedCardWidget, StateToolTip, \
     FluentIcon, TransparentToolButton, Flyout, \
     CheckBox, FlyoutViewBase, BodyLabel, PrimaryPushButton, FlyoutAnimationType, SegmentedWidget, \
     SingleDirectionScrollArea, InfoBarPosition, InfoBarIcon, MessageBoxBase, Dialog, IndeterminateProgressBar
@@ -23,6 +23,7 @@ from view.components.folder_tree import TreeFrame
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
 from view.components.empty_state_widget import EmptyStateWidget
+from view.components.history_search_line_edit import HistorySearchLineEdit
 
 
 # 搜索区域
@@ -33,7 +34,7 @@ class ComicSearchCardView(QWidget):
     def __init__(self, title: str, parent=None):
         super().__init__(parent=parent)
         self.titleLabel = QLabel(title, self)
-        self.lineEdit = SearchLineEdit()
+        self.lineEdit = HistorySearchLineEdit(cfg.comic_search_history)
         self.lineEdit.setFixedWidth(500)
         self.lineEdit.setFixedHeight(40)
         self.lineEdit.searchButton.setIconSize(QSize(14, 14))

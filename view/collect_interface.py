@@ -10,7 +10,7 @@ from PyQt5.QtGui import QPixmap, QMovie, QColor, QDrag
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QApplication, QFrame
 from qfluentwidgets import ScrollArea, CardWidget, ElevatedCardWidget, BodyLabel, CaptionLabel, \
-    FlowLayout, SearchLineEdit, SegmentedToolWidget, TransparentToolButton, FluentIcon, InfoBarPosition, Flyout, \
+    FlowLayout, SegmentedToolWidget, TransparentToolButton, FluentIcon, InfoBarPosition, Flyout, \
     FlyoutAnimationType, InfoBarIcon, PipsPager, PipsScrollButtonDisplayMode, RoundMenu, Action, MessageBoxBase, \
     SubtitleLabel, LineEdit, MessageBox, BreadcrumbBar, setFont
 
@@ -27,6 +27,7 @@ from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.empty_state_widget import EmptyStateWidget
 from view.components.pagination_bar import PaginationBar
 from view.components.info_bar_tip import show_tip
+from view.components.history_search_line_edit import HistorySearchLineEdit
 
 
 class CollectInterface(QWidget):
@@ -157,7 +158,7 @@ class CollectWidget(QWidget):
         self.vBoxLayout = QVBoxLayout(self)
 
         # 搜索框
-        self.lineEdit = SearchLineEdit()
+        self.lineEdit = HistorySearchLineEdit(cfg.collect_search_history)
         self.lineEdit.setFixedWidth(500)
         self.lineEdit.setFixedHeight(40)
         self.lineEdit.searchButton.setIconSize(QSize(14, 14))
@@ -252,7 +253,7 @@ class CollectWidget(QWidget):
     def getRecords(self, index):
         # 清空流动布局内容
         self.flowLayout.takeAllWidgets()
-        self.comicCollects = ComicCollects(index=index, text=self._searchText, type=self.type, folder_id=self.folder_id)
+        self.comicCollects = ComicCollects(index=index, text=self._searchText, type=self.type, folder_id=self.folder_id, limit=self._pageSize)
         self.comicCollects.success.connect(self.updateView)
         self.comicCollects.start()
         self.pager.setPage(index, self._pageCount, self._total)

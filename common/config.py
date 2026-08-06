@@ -105,9 +105,12 @@ class Config(QConfig):
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
-    version = ConfigItem("Update", "Version", 'V2.0.0')
+    version = ConfigItem("Update", "Version", 'V2.0.1')
 
     year = ConfigItem("Update", "Year", date.today().year)
+
+    # 公告：上次用户主动关闭的公告标识（md5），相同内容下次启动不再弹出
+    lastNotificationId = ConfigItem("Notification", "LastNotificationId", '')
 
     # 拷贝漫画地址
     copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
@@ -137,7 +140,13 @@ class Config(QConfig):
     collectPageSize = ConfigItem("Pagination", "CollectPageSize", 15)
     downloadPageSize = ConfigItem("Pagination", "DownloadPageSize", 10)
 
-VERSION_NO = 'V2.0.0'
+    # 搜索历史（JSON 字符串数组，最新在前；漫画/图书/收藏/下载 四页各自独立）
+    comic_search_history = ConfigItem("SearchHistory", "Comic", '[]')
+    book_search_history = ConfigItem("SearchHistory", "Book", '[]')
+    collect_search_history = ConfigItem("SearchHistory", "Collect", '[]')
+    download_search_history = ConfigItem("SearchHistory", "Download", '[]')
+
+VERSION_NO = 'V2.0.1'
 YEAR = date.today().year
 AUTHOR = "甜甜的王甜甜"
 HELP_URL = "https://support.qq.com/products/656074"

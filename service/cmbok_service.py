@@ -34,6 +34,40 @@ comic_search_lock = QMutex()
 book_search_lock = QMutex()
 download_comic_lock = QMutex()
 
+# 内置账号 token 缓存：email -> (remix_userid, remix_userkey, cache_time)
+# 避免每次搜索/下载都 POST /eapi/user/login，触发 Cloudflare 429 限流
+_builtin_token_cache = {}
+_builtin_token_lock = QMutex()
+_BUILTIN_TOKEN_TTL = 600  # 10 分钟
+
+
+def _get_builtin_zlibrary(email, password):
+    """获取内置账号的 Zlibrary 实例：优先用缓存的 token 走 profile 校验，失效再 login。
+    返回已登录的 Z；地址不可用（404）时返回 isUnavailable()=True 的 Z 供调用方判断；其余失败返回 None。"""
+    _builtin_token_lock.lock()
+    cached = _builtin_token_cache.get(email)
+    _builtin_token_lock.unlock()
+    if cached:
+        remix_userid, remix_userkey, ts = cached
+        if time.time() - ts < _BUILTIN_TOKEN_TTL:
+            Z = Zlibrary(remix_userid=remix_userid, remix_userkey=remix_userkey)
+            if Z.isLoggedIn():
+                return Z
+            if Z.isUnavailable():
+                return Z  # 地址不可用（404），回传给调用方判断
+    # 缓存失效/校验失败，重新 login
+    Z = Zlibrary(email=email, password=password)
+    if Z.isLoggedIn():
+        remix_userid, remix_userkey = Z.getRemixToken()
+        if remix_userid and remix_userkey:
+            _builtin_token_lock.lock()
+            _builtin_token_cache[email] = (remix_userid, remix_userkey, time.time())
+            _builtin_token_lock.unlock()
+        return Z
+    if Z.isUnavailable():
+        return Z  # 地址不可用（404），回传给调用方判断
+    return None
+
 
 # 搜索图书
 @dataclass
@@ -61,6 +95,10 @@ class BookSearch(QThread):
                 results = self._search_with_builtin_account()
                 if results is None:
                     self.success.emit('no_account', None)
+                elif results.get('rate_limited'):
+                    self.success.emit('rate_limited', None)
+                elif results.get('unavailable'):
+                    self.success.emit('unavailable', None)
                 else:
                     self._emit_success(results)
             else:
@@ -72,10 +110,18 @@ class BookSearch(QThread):
                     return
                 Z = Zlibrary(remix_userid=remix_userid, remix_userkey=remix_userkey)
                 if not Z.isLoggedIn():
-                    self.success.emit('no_login', None)
+                    # 地址不可用（404）与登录失效区分提示
+                    if Z.isUnavailable():
+                        self.success.emit('unavailable', None)
+                    else:
+                        self.success.emit('no_login', None)
                     return
                 results = self._do_search(Z)
-                if results is None or not results.get('success'):
+                if results and results.get('rate_limited'):
+                    self.success.emit('rate_limited', None)
+                elif results and results.get('unavailable'):
+                    self.success.emit('unavailable', None)
+                elif results is None or not results.get('success'):
                     self.success.emit('fail', None)
                 else:
                     self._emit_success(results)
@@ -117,11 +163,19 @@ class BookSearch(QThread):
 
     def _search_with_builtin_account(self):
         for account in BUILTIN_ACCOUNTS:
-            Z = Zlibrary(email=account['email'], password=account['password'])
-            if not Z.isLoggedIn():
+            Z = _get_builtin_zlibrary(account['email'], account['password'])
+            if not Z:
                 continue
+            # 地址不可用（404）：所有账号都会失败，停止轮询
+            if Z.isUnavailable():
+                return {'unavailable': True}
             results = self._do_search(Z)
             if results and results.get('success'):
+                return results
+            if results and results.get('unavailable'):
+                return results
+            if results and results.get('rate_limited'):
+                # 被限流，停止轮询其他账号，避免加剧 429
                 return results
         return None
 
@@ -371,8 +425,8 @@ class BookDownload(QThread):
         # 按计数轮转起点，均匀分散到各账号
         for i in range(len(BUILTIN_ACCOUNTS)):
             account = BUILTIN_ACCOUNTS[(start + i) % len(BUILTIN_ACCOUNTS)]
-            Z = Zlibrary(email=account['email'], password=account['password'])
-            if not Z.isLoggedIn():
+            Z = _get_builtin_zlibrary(account['email'], account['password'])
+            if not Z or Z.isUnavailable():
                 continue
             allow, filename, ddl, headers = Z.getDownloadLink(self.book_id, self.book_hash)
             if not allow or not ddl:
@@ -583,12 +637,13 @@ class ComicChapters(QThread):
 class ComicCollects(QThread):
     success = pyqtSignal(object, object)
 
-    def __init__(self, index, text, type, folder_id):
+    def __init__(self, index, text, type, folder_id, limit):
         super(ComicCollects, self).__init__()
         self.index = index
         self.text = text
         self.type = type
         self.folder_id = folder_id
+        self.limit = limit
 
     def run(self):
         sqlite_util = SQLiteDatabase()
@@ -597,13 +652,14 @@ class ComicCollects(QThread):
             if self.text is not None and self.text != '':
                 datas = sqlite_util.query_records(
                     conditions={'name': f'%{self.text}%', 'type': self.type},
-                    order_by='collection_time DESC', limit=16,
-                    offset=self.index * 16)
+                    order_by='collection_time DESC', limit=self.limit,
+                    offset=self.index * self.limit)
             else:
                 datas = sqlite_util.query_folder_records(
                     conditions={'name': f'%{self.text}%', 'type': self.type, 'folder_id': self.folder_id},
-                    limit=16,
-                    offset=self.index * 16)
+                    order_by='is_folder, add_time DESC, id',
+                    limit=self.limit,
+                    offset=self.index * self.limit)
 
             self.success.emit('success', datas)
         except Exception as e:
@@ -1056,7 +1112,10 @@ class ComicWebsiteChapterImages(QThread):
         last_err = ''
         for attempt in range(3):
             try:
-                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                # 直连优先(trust_env=False)，失败后走系统代理(trust_env=True)重试：
+                # 兼顾直连可达站(如 mwappimgs.cc)与需代理站(如 s1.bzcdn.net)。
+                # connect 阶段 5s 超时，让直连不通的站快速失败走代理，避免每张图等满 30s
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True, trust_env=(attempt >= 1)) as client:
                     response = await client.get(url, headers=headers)
                     if response.status_code == 200:
                         with open(target, 'wb') as file:
@@ -1064,7 +1123,8 @@ class ComicWebsiteChapterImages(QThread):
                         return
                     last_err = f'status={response.status_code}'
             except Exception as e:
-                last_err = str(e)
+                # 带异常类型，避免 ConnectTimeout 等异常 str() 为空时 last_err 误导排查
+                last_err = f'{type(e).__name__}: {e}'
             # 失败后退避重试
             await asyncio.sleep(1 + attempt)
         logging.info(f'图片下载失败(重试3次): {url} | {last_err}')

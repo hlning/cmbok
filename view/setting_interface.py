@@ -19,6 +19,7 @@ from common.signal_bus import signalBus
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
 from view.components.info_bar_tip import show_tip
+from view.components.update_dialog import show_new_version_dialog
 
 
 class SettingInterface(ScrollArea):
@@ -316,9 +317,7 @@ class SettingInterface(ScrollArea):
                 if tag and tag != cfg.get(cfg.version):
                     body = release.get('body') or '发现新版本，是否前往下载？'
                     html_url = release.get('html_url') or GITHUBURL
-                    w = MessageBox("检测到新版本，是否更新？", body, self.window())
-                    if w.exec():
-                        QDesktopServices.openUrl(QUrl(html_url))
+                    show_new_version_dialog(self.window(), body, html_url)
                 else:
                     show_tip(InfoBarIcon.INFORMATION, '温馨提示', '已是最新版本~~', self)
             else:

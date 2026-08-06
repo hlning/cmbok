@@ -106,6 +106,9 @@ class ZlibraryLoginDialog(MessageBoxBase):
             self._saveEmailHistory(email)
             self.loginSuccess.emit(email)
             self.accept()
+        elif status == 'unavailable':
+            show_tip(InfoBarIcon.WARNING, '图书功能受限',
+                     '图书功能暂不可用，请等待恢复~', self, InfoBarPosition.TOP, duration=5000)
         elif status == 'fail':
             show_tip(InfoBarIcon.ERROR, '温馨提示', '登录失败，请检查邮箱与密码', self, InfoBarPosition.TOP)
         else:

@@ -12,7 +12,7 @@ class LinkCard(ElevatedCardWidget):
     def __init__(self, icon, title, content, url, parent=None):
         super().__init__(parent=parent)
         self.url = QUrl(url)
-        self.setMinimumHeight(250)
+        self.setMinimumHeight(260)
         self.iconWidget = IconWidget(icon, self)
         self.titleLabel = QLabel(title, self)
         self.contentLabel = QLabel(content, self)
@@ -150,5 +150,6 @@ class LinkCardView(SingleDirectionScrollArea):
     def addCard(self, icon, title, content, url):
         """ add link card """
         card = LinkCard(icon, title, content, url, self.view)
-        self.hBoxLayout.addWidget(card, 0, Qt.AlignLeft)
+        # 垂直顶部对齐：卡片高度跟随内容，避免被拉伸后封面上方留白、底部介绍文字被裁
+        self.hBoxLayout.addWidget(card, 0, Qt.AlignLeft | Qt.AlignTop)
         self._adjustCardWidths()
