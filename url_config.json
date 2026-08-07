@@ -1,6 +1,6 @@
 { 
   "copy_url": "https://api.copy3000.com/", 
-  "zlibrary_url": {
+  "zlibrary_url": [
     "zh.zlibrary.by",
     "free2read.cc",
     "26h2.tech",
@@ -8,5 +8,5 @@
     "loves.works",
     "biblioteca.pro",
     "toffeeboba.com"
-  } 
+  ]
 }
