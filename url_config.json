@@ -1,1 +1,12 @@
-{ "copy_url": "https://api.copy3000.com/", "zlibrary_url": "zh.zlibrary.by" }
+{ 
+  "copy_url": "https://api.copy3000.com/", 
+  "zlibrary_url": [
+    "free2read.cc",
+    "26h2.tech",
+    "86110101.xyz",
+    "loves.works",
+    "biblioteca.pro",
+    "toffeeboba.com",
+    "zh.zlibrary.by"
+  ]
+}
