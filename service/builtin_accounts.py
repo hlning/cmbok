@@ -3,24 +3,8 @@
 
 BUILTIN_ACCOUNTS = [
     {
-        'email': 'nhl0821@163.com',
-        'password': '7BmXtdia',
-    },
-    {
-        'email': '1272814404@qq.com',
-        'password': 'wDpvsFu1',
-    },
-    {
-        'email': '2328893612@qq.com',
-        'password': 'zHNJzSE5',
-    },
-    {
         'email': '1911607739@qq.com',
         'password': 'chnattDJ',
-    },
-    {
-        'email': '18273183104@163.com',
-        'password': 'BzQTuAXv',
     },
     {
         'email': '19201347003@163.com',

@@ -20,10 +20,22 @@ from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import ComicSearch, ComicGroups, ComicChapters, ComicChapterImages
 from utils.base_utils import truncate_string, get_current_time
 from view.components.folder_tree import TreeFrame
+from view.components.detail_dialog_base import present_detail_dialog, content_parent
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
 from view.components.empty_state_widget import EmptyStateWidget
 from view.components.history_search_line_edit import HistorySearchLineEdit
+
+
+def _tip_parent(widget):
+    """向上查找最近的浮窗/对话框祖先作为提示宿主，找不到则用主窗口。
+    替代原硬编码的 _tip_parent(self)，兼容浮窗与详情对话框两种挂载场景。"""
+    p = widget.parent()
+    while p is not None:
+        if isinstance(p, (FlyoutViewBase, MessageBoxBase)):
+            return p
+        p = p.parent()
+    return widget.window()
 
 
 # 搜索区域
@@ -93,6 +105,13 @@ class ComicSearchCardView(QWidget):
         self.resultStack.setCurrentWidget(self.emptyWidget)
 
         self.stateTooltip = None
+
+        # resize 防抖：拖动/缩放窗口时 resizeEvent 高频触发，用单次定时器合并，
+        # 停止 100ms 后才重排一次卡片宽度，避免重排风暴卡死主线程导致拖动抖动
+        self._resizeTimer = QTimer(self)
+        self._resizeTimer.setSingleShot(True)
+        self._resizeTimer.setInterval(100)
+        self._resizeTimer.timeout.connect(self.refreshCardWidth)
 
         self.vBoxLayout.setContentsMargins(36, 0, 36, 24)
         self.vBoxLayout.setSpacing(10)
@@ -252,8 +271,8 @@ class ComicSearchCardView(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # 延迟到布局完成后再重排，确保取到最新结果区宽度
-        QTimer.singleShot(0, self.refreshCardWidth)
+        # 防抖：拖动过程中只重启定时器，停止 100ms 后才重排一次（取最新结果区宽度）
+        self._resizeTimer.start()
 
     def addSampleCard(self, comic):
         """ add sample card """
@@ -334,6 +353,7 @@ class ComicCard(ElevatedCardWidget):
 
         self.titleLabel.setObjectName('titleLabel')
         self.authorLabel.setObjectName('authorLabel')
+        self.setCursor(Qt.PointingHandCursor)
 
     # 加载网络图片
     def load_image(self, image_url):
@@ -377,44 +397,75 @@ class ComicCard(ElevatedCardWidget):
                     aniType=FlyoutAnimationType.PULL_UP)
 
     def collectComic(self):
-        sqlite_util = SQLiteDatabase()
-        try:
-            if not self.is_collect:
-                # 收藏
-                w = TreeMessageBox(self.window())
-                if w.exec():
-                    # 遍历树节点获取选中的节点
-                    selected_items = w.treeFrame.tree.selectedItems()
-                    if selected_items:
-                        # 如果有选中的项，获取第一个选中项并输出名称
-                        selected_item = selected_items[0]
-                        folder_name = selected_item.text(0)  # 获取第一列的文本
-                        # 通过名称查询文件夹id
-                        folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 1})
-                        folder_id = 0 if folder_name == '首页' else folder[0].id
-
-                        sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
-                                                                            'name': self.name, 'author': self.author,
-                                                                            'key': self.path_word, 'type': 1,
-                                                                            'collection_time': get_current_time(),
-                                                                            'folder_id': folder_id})
-                        self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
-                        self.is_collect = True
-                        show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent())
-            else:
-                self.collectBtn.setIcon(MyFluentIcon.COLLECT)
-                # 取消收藏
+        # 取消收藏：立即执行，无弹窗
+        if self.is_collect:
+            sqlite_util = SQLiteDatabase()
+            try:
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.path_word, 'type': 1})
+                self.collectBtn.setIcon(MyFluentIcon.COLLECT)
                 self.is_collect = False
                 show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent())
-            signalBus.collectChanged.emit()
-        except Exception:
-            show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
-            sqlite_util.rollback()
-            logging.info(traceback.format_exc())
-            logging.info('收藏漫画异常')
-        finally:
-            sqlite_util.close()
+                signalBus.collectChanged.emit()
+            except Exception:
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
+                sqlite_util.rollback()
+                logging.info(traceback.format_exc())
+                logging.info('收藏漫画异常')
+            finally:
+                sqlite_util.close()
+            return
+
+        # 收藏：非模态弹出收藏夹选择，确认后写入
+        win = self.window()
+        w = TreeMessageBox(content_parent(win))
+        cover, name, author, path_word = self.cover, self.name, self.author, self.path_word
+
+        def _on_accepted():
+            selected_items = w.treeFrame.tree.selectedItems()
+            if not selected_items:
+                return
+            folder_name = selected_items[0].text(0)
+            sqlite_util = SQLiteDatabase()
+            try:
+                # 通过名称查询文件夹id
+                folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 1})
+                folder_id = 0 if folder_name == '首页' else folder[0].id
+
+                sqlite_util.insert_data('cmbok_collection_record', {'cover': cover, 'name': name, 'author': author,
+                                                                    'key': path_word, 'type': 1,
+                                                                    'collection_time': get_current_time(),
+                                                                    'folder_id': folder_id})
+                signalBus.collectChanged.emit()
+                show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', win, InfoBarPosition.TOP)
+                # 卡片可能已被新搜索重建（弹窗开着时翻页/重搜触发 takeAllWidgets），此时跳过按钮更新
+                try:
+                    self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
+                    self.is_collect = True
+                except RuntimeError:
+                    pass
+            except Exception:
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', win, InfoBarPosition.TOP)
+                sqlite_util.rollback()
+                logging.info(traceback.format_exc())
+                logging.info('收藏漫画异常')
+            finally:
+                sqlite_util.close()
+
+        w.accepted.connect(_on_accepted)
+        present_detail_dialog(w)
+
+    def mouseReleaseEvent(self, event):
+        # 点击卡片非按钮区域打开详情对话框；按钮自身消费鼠标事件不会触发此处
+        if event.button() == Qt.LeftButton:
+            self._open_detail()
+        super().mouseReleaseEvent(event)
+
+    def _open_detail(self):
+        from .comic_detail_dialog import ComicDetailDialog
+        # parent 取内容区（stackedWidget.view）：遮罩只盖内容区，导航栏露出可继续切换
+        dlg = ComicDetailDialog(self.cover, self.name, self.author, self.path_word,
+                                content_parent(self.window()))
+        present_detail_dialog(dlg)
 
 
 # 树形菜单
@@ -621,15 +672,15 @@ class ChapterTypeView(QWidget):
     def loadComicChapters(self, status, chapters):
         try:
             if status == 'fail':
-                show_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', self.parent().parent().parent().parent(),
+                show_tip(InfoBarIcon.WARNING, '温馨提示', '网络异常，o(╥﹏╥)o', _tip_parent(self),
                          InfoBarPosition.TOP_RIGHT)
             elif status == 'timeout':
                 show_tip(InfoBarIcon.ERROR, '温馨提示', '请求超时了，(。・＿・。)ﾉI’m sorry~',
-                         self.parent().parent().parent().parent(),
+                         _tip_parent(self),
                          InfoBarPosition.TOP_RIGHT)
             elif status == 'error':
                 show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常，(。・＿・。)ﾉI’m sorry~',
-                         self.parent().parent().parent().parent(),
+                         _tip_parent(self),
                          InfoBarPosition.TOP_RIGHT)
             else:
                 # type 1：话 2:卷 3:番外篇
@@ -713,12 +764,13 @@ class ChapterDetailView(QWidget):
 
         # 创建横向布局
         self.hbox_layout = QHBoxLayout()
-        # 创建按钮并添加到横向布局
-        # 下载按钮
+        # 下载按钮右靠，与章节区域右边缘对齐
         self.download_button = PrimaryPushButton(FluentIcon.DOWNLOAD, '下载')
         self.download_button.setFixedWidth(140)
         self.download_button.clicked.connect(lambda: self.downloadComic(chapters))
+        self.hbox_layout.addStretch()
         self.hbox_layout.addWidget(self.download_button)
+        self.hbox_layout.addStretch()
 
         # 将横向布局添加到垂直布局
         self.layout.addLayout(self.hbox_layout)
@@ -754,9 +806,21 @@ class ChapterDetailView(QWidget):
 
     def downloadComicStatus(self, status):
         from ..collect_interface import CollectAreaInterface
+        from .comic_detail_dialog import ComicDetailDialog
         current_widget = self.parent()
         while current_widget is not None:
-            if isinstance(current_widget, ComicSearchCardView) or isinstance(current_widget, CollectAreaInterface):
+            if isinstance(current_widget, (ComicSearchCardView, CollectAreaInterface)):
                 current_widget.success.emit(status)
+                return
+            if isinstance(current_widget, ComicDetailDialog):
+                # 详情对话框内下载章节：直接提示，不依赖外层搜索页
+                msg = {'success': '已开始下载，可在「下载」页查看进度',
+                       'lock': '有下载任务进行中，已加入队列',
+                       'error': '下载失败，请重试'}.get(status, '下载状态：' + str(status))
+                icon = InfoBarIcon.ERROR if status == 'error' else InfoBarIcon.SUCCESS
+                try:
+                    show_tip(icon, '温馨提示', msg, current_widget)
+                except Exception:
+                    pass
                 return
             current_widget = current_widget.parent()  # 继续向上查找

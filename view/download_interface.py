@@ -115,6 +115,15 @@ class DownloadInterface(QWidget):
         elif status == 'no_num':
             show_tip(InfoBarIcon.ERROR, '温馨提示', f"已达到今日最大下载限制，明天再来吧(*^▽^*)", self,
                          InfoBarPosition.TOP_RIGHT)
+        elif status == 'quota_exceeded':
+            show_tip(InfoBarIcon.ERROR, '温馨提示', f"账号今日下载额度已用完，明天再来吧(*^▽^*)", self,
+                         InfoBarPosition.TOP_RIGHT)
+        elif status == 'no_login':
+            show_tip(InfoBarIcon.ERROR, '温馨提示', f"登录已失效，请重新登录后再下载~", self,
+                         InfoBarPosition.TOP_RIGHT)
+        elif status == 'unavailable':
+            show_tip(InfoBarIcon.WARNING, '温馨提示', f"图书功能暂不可用，请等待恢复~", self,
+                         InfoBarPosition.TOP_RIGHT)
 
         self.updateComicRecords(type)
 
@@ -213,6 +222,12 @@ class DownloadWidget(QWidget):
         self.tableWidget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         # 防止 sectionResized 回调重入
         self._resizing = False
+        # resize 防抖：拖动/缩放窗口时 resizeEvent 高频触发，用单次定时器合并，
+        # 停止 100ms 后才重算一次列宽，避免重排风暴卡死主线程导致拖动抖动
+        self._resizeTimer = QTimer(self)
+        self._resizeTimer.setSingleShot(True)
+        self._resizeTimer.setInterval(100)
+        self._resizeTimer.timeout.connect(self.reset_bookview_size)
         # 设置水平表头并隐藏垂直表头
         header = self.tableWidget.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -424,8 +439,8 @@ class DownloadWidget(QWidget):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        # 延迟到布局完成后再重算列宽，确保取到最新表格宽度并及时自适应
-        QTimer.singleShot(0, self.reset_bookview_size)
+        # 防抖：拖动过程中只重启定时器，停止 100ms 后才重算一次（取最新表格宽度）
+        self._resizeTimer.start()
 
     # 回车搜索
     def enter(self):
@@ -478,9 +493,9 @@ class DownloadWidget(QWidget):
 
             # 添加表格数据
             for i, history in enumerate(historys):
-                status_msg = '下载限制' if history.status == -5 else '今日无法下载' if history.status == -4 else '软件退出' if history.status == -3 else '版权受限' if history.status == -2 else '转换epub失败' if history.status == -1 else '下载中' if history.status == 1 else '等待中' if history.status == 2 else '已完成' if history.status == 3 else '下载失败'
+                status_msg = '地址不可用' if history.status == -8 else '登录失效' if history.status == -7 else '额度用完' if history.status == -6 else '下载限制' if history.status == -5 else '今日无法下载' if history.status == -4 else '软件退出' if history.status == -3 else '版权受限' if history.status == -2 else '转换epub失败' if history.status == -1 else '下载中' if history.status == 1 else '等待中' if history.status == 2 else '已完成' if history.status == 3 else '下载失败'
                 status_item = QTableWidgetItem(status_msg)
-                if history.status == -5 or history.status == -4 or history.status == -3 or history.status == -2 or history.status == -1 or history.status == 0:
+                if history.status == -8 or history.status == -7 or history.status == -6 or history.status == -5 or history.status == -4 or history.status == -3 or history.status == -2 or history.status == -1 or history.status == 0:
                     status_item.setForeground(QBrush(QColor(253, 46, 86)))  # 红色字体
                 elif history.status == 1:
                     status_item.setForeground(QBrush(QColor(64, 158, 215)))  # 蓝色字体

@@ -32,6 +32,9 @@ class ZlibraryLogin(QThread):
                 cfg.set(cfg.zlibrary_username, Z.getName() or '')
                 cfg.set(cfg.zlibrary_remix_userid, remix_userid if remix_userid else '')
                 cfg.set(cfg.zlibrary_remix_userkey, remix_userkey if remix_userkey else '')
+                # 缓存 profile 最新下载量，登录后头像立即显示实际值（自登账号改进）
+                from service.cmbok_service import _update_profile_downloads
+                _update_profile_downloads(remix_userid, Z.getDownloadsToday(), Z.getDownloadsLimit())
                 signalBus.zlibraryLoginChanged.emit(self.email)
                 self.success.emit('success', self.email)
             else:

@@ -1,5 +1,6 @@
 # coding:utf-8
 import hashlib
+import json
 import logging
 import time
 import traceback
@@ -7,7 +8,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import Qt, QSize, QUrl, QTimer
 from PyQt5.QtGui import QIcon, QImage, QDesktopServices
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication, QDesktopWidget
+from PyQt5.QtWidgets import QFrame, QHBoxLayout, QApplication, QDesktopWidget, QStackedWidget
 from qfluentwidgets import FluentIcon as FIF, SplashScreen, InfoBarIcon, InfoBarPosition, TeachingTip, \
     TeachingTipTailPosition
 from qfluentwidgets import NavigationItemPosition, FluentWindow, SubtitleLabel, setFont, NavigationAvatarWidget, \
@@ -17,7 +18,7 @@ from common.sqlite_util import SQLiteDatabase
 from common.signal_bus import signalBus
 from resource import resource
 from common.config import VERSION_NO, LOG_PATH, cfg
-from service.startup_check_service import StartupCheckThread
+from service.startup_check_service import StartupCheckThread, ZlibraryHealthCheckThread
 from custom.my_fluent_icon import MyFluentIcon
 from utils.komga_utils import start_komga, stop_komga
 from utils.utils_files_and_folders import clean_file
@@ -32,6 +33,7 @@ from view.download_interface import DownloadInterface, download_signals
 from view.file_manager_interface import FileManagerInterface
 from view.setting_interface import SettingInterface
 from view.tool_interface import ToolInterface
+from view.peer_transfer_interface import PeerTransferInterface
 from view.website_interface import WebsiteInterface
 
 
@@ -72,6 +74,8 @@ class Window(FluentWindow):
         self.downloadInterface = DownloadInterface(self)
         # 工具窗口
         self.toolInterface = ToolInterface(self)
+        # 在线传书窗口
+        self.peerTransferInterface = PeerTransferInterface(self)
         # 设置窗口
         self.settingInterface = SettingInterface(self)
         # 初始化侧边栏
@@ -90,8 +94,12 @@ class Window(FluentWindow):
         self._navTimer.setSingleShot(True)
         self._navTimer.setInterval(150)
         self._navTimer.timeout.connect(self._doNavRefresh)
-        # 禁用导航切换的弹出动画（原 300ms 位置动画在内容多时掉帧），改为瞬时切换
-        self.stackedWidget.setCurrentWidget = lambda widget, popOut=False: self.stackedWidget.view.setCurrentWidget(widget, duration=0)
+        # 禁用导航切换的弹出动画（原 300ms 位置动画在内容多时掉帧），改为瞬时切换。
+        # 直接调用 QStackedWidget 原生 setCurrentIndex：无动画、无 ani.finished 连接，
+        # 仍触发 currentChanged（导航高亮 / on_navigation_changed 刷新照常）；
+        # 避免 duration=0 动画在快速切换时 ani.finished 连接异步泄漏、随切换次数累积卡顿
+        self.stackedWidget.setCurrentWidget = lambda widget, popOut=False: QStackedWidget.setCurrentIndex(
+            self.stackedWidget.view, self.stackedWidget.view.indexOf(widget))
         # 更新配置文件中的版本号
         cfg.set(cfg.version, VERSION_NO)
         # 配置日志记录
@@ -112,6 +120,16 @@ class Window(FluentWindow):
         self._startupCheckThread.urlConfigUpdated.connect(self._onUrlConfigUpdated)
         self._startupCheckThread.zlibraryUnavailable.connect(self._onZlibraryUnavailable)
         self._startupCheckThread.start()
+        # zlibrary 可用状态（启动检测后修正；定时健康检查据此做状态变化通知）
+        self._zlibrary_available = True
+        # 当前 zlibrary 状态 InfoBar（持久提示需状态变化时主动关闭，避免恢复/不可用交替时堆叠）
+        self._zlibrary_status_bar = None
+        # 定时健康检查：每 30 分钟重新探测 zlibrary 多节点，状态变化时通知用户
+        self._health_threads = set()
+        self._zlibraryHealthTimer = QTimer(self)
+        self._zlibraryHealthTimer.setInterval(30 * 60 * 1000)
+        self._zlibraryHealthTimer.timeout.connect(self._check_zlibrary_health)
+        self._zlibraryHealthTimer.start()
 
     # 运行komga
     def run_komga(self):
@@ -143,18 +161,71 @@ class Window(FluentWindow):
     def _markNotificationRead(self, nid):
         cfg.set(cfg.lastNotificationId, nid)
 
-    # 地址配置检测完成：更新 copy_url/zlibrary_url
+    # 地址配置检测完成：更新 copy_url/zlibrary_url 及候选列表
     def _onUrlConfigUpdated(self, updates):
         if updates.get('copy_url'):
             cfg.set(cfg.copy_url, updates['copy_url'])
         if updates.get('zlibrary_url'):
             cfg.set(cfg.zlibrary_url, updates['zlibrary_url'])
+        if updates.get('zlibrary_url_candidates'):
+            cfg.set(cfg.zlibrary_url_candidates, json.dumps(updates['zlibrary_url_candidates']))
+        # 探测到可用 zlibrary 最优节点 -> 标记可用（候选列表更新不代表可用，不据此设状态）
+        if updates.get('zlibrary_url'):
+            self._zlibrary_available = True
 
     # zlibrary_url 本地与云端候选全部不可用：提示图书功能受限（不拦截搜索，仅提示）
     def _onZlibraryUnavailable(self):
-        show_tip(InfoBarIcon.WARNING, '图书功能受限',
-                 '图书搜索/下载暂不可用，请等待恢复后再重试~', self,
-                 InfoBarPosition.TOP, duration=-1)
+        self._zlibrary_available = False
+        # 关闭旧的持久提示（如恢复后又变不可用），避免堆叠
+        self._close_zlibrary_status_bar()
+        self._zlibrary_status_bar = show_tip(
+            InfoBarIcon.WARNING, '图书功能受限',
+            '图书搜索/下载暂不可用，请等待恢复后再重试~', self,
+            InfoBarPosition.TOP, duration=-1)
+
+    # 定时健康检查：创建临时探测线程，持有引用防 GC，finished 后清理
+    def _check_zlibrary_health(self):
+        thread = ZlibraryHealthCheckThread(self)
+        thread.available.connect(self._onHealthAvailable)
+        thread.unavailable.connect(self._onHealthUnavailable)
+        self._health_threads.add(thread)
+        thread.finished.connect(lambda t=thread: self._health_threads.discard(t))
+        thread.start()
+
+    # 定时检测发现可用节点：更新配置（若有更新）；之前不可用则通知已恢复
+    def _onHealthAvailable(self, updates):
+        was_available = self._zlibrary_available
+        if updates:
+            self._onUrlConfigUpdated(updates)  # 含设 available=True
+        else:
+            self._zlibrary_available = True  # 本地已最优，仅需标记可用
+        if not was_available:
+            # 恢复：关闭之前的「暂不可用」持久提示，再弹 5s 恢复提示（自动消失，不持有引用）
+            self._close_zlibrary_status_bar()
+            show_tip(InfoBarIcon.INFORMATION, '图书功能已恢复',
+                     '节点已恢复可用~', self, InfoBarPosition.TOP, duration=5000)
+
+    # 定时检测全部候选不可用：之前可用则通知暂不可用
+    def _onHealthUnavailable(self):
+        if self._zlibrary_available:
+            self._zlibrary_available = False
+            # 关闭旧持久提示（一般无，防御），避免堆叠
+            self._close_zlibrary_status_bar()
+            self._zlibrary_status_bar = show_tip(
+                InfoBarIcon.WARNING, '图书功能受限',
+                '图书功能暂不可用，请等待恢复~', self,
+                InfoBarPosition.TOP, duration=-1)
+
+    # 关闭并清理当前 zlibrary 状态 InfoBar（持久提示在状态变化时主动关闭，避免堆叠）
+    def _close_zlibrary_status_bar(self):
+        bar = self._zlibrary_status_bar
+        if bar is not None:
+            self._zlibrary_status_bar = None
+            try:
+                bar.close()
+                bar.deleteLater()
+            except Exception:
+                pass
 
     # 监听侧边栏改变事件
     def on_navigation_changed(self, index):
@@ -173,7 +244,10 @@ class Window(FluentWindow):
         elif idx == 1:
             self.bookInterface.refreshCards()
         elif idx == 2:
-            self.websiteInterface.updateWebsiteRecords(1)
+            # 站点增删改已自行立即刷新列表，切回时仅在脏（首次未渲染）时重建，避免冗余重建
+            if self.websiteInterface._website_dirty:
+                self.websiteInterface.updateWebsiteRecords(1)
+                self.websiteInterface._website_dirty = False
         elif idx == 4:
             # 仅在收藏数据变化（collectChanged 置脏）时刷新当前子界面
             ci = self.collectInterface
@@ -203,6 +277,7 @@ class Window(FluentWindow):
         self.addSubInterface(self.collectInterface, MyFluentIcon.COLLECT, '收藏')
         self.addSubInterface(self.downloadInterface, FIF.DOWNLOAD, '下载')
         self.addSubInterface(self.toolInterface, MyFluentIcon.TOOL, '工具箱')
+        self.addSubInterface(self.peerTransferInterface, FIF.SYNC, '在线传书')
         self.navigationInterface.addSeparator()
 
         # 左下角 z-library 登录状态头像
@@ -360,13 +435,19 @@ class Window(FluentWindow):
     # 刷新头像显示：名称 + 当日下载计数（未登录用内置账号 5，已登录按账号 10）
     def _refreshAvatarDisplay(self, *args):
         from service.cmbok_service import (get_builtin_download_count, BUILTIN_DAILY_LIMIT,
-                                           get_logged_download_count, LOGGED_DAILY_LIMIT)
+                                           get_logged_download_count, LOGGED_DAILY_LIMIT,
+                                           get_profile_downloads)
         email = cfg.get(cfg.zlibrary_email)
         if email:  # 已登录：显示用户名 + 该账号当日下载 /10
             name = cfg.get(cfg.zlibrary_username) or email
             userid = cfg.get(cfg.zlibrary_remix_userid)
-            count = get_logged_download_count(userid)
-            limit = LOGGED_DAILY_LIMIT
+            # 自登账号优先用 profile 实际下载量（含外部消耗，区别于软件本地计数）；
+            # 无缓存（如刚切换账号尚未搜索/下载）则回退本地计数
+            pd = get_profile_downloads(userid)
+            if pd is not None:
+                count, limit = (pd[0] or 0), (pd[1] or LOGGED_DAILY_LIMIT)
+            else:
+                count, limit = get_logged_download_count(userid), LOGGED_DAILY_LIMIT
         else:  # 未登录：显示内置账号限额 /5
             name = '未登录'
             count = get_builtin_download_count()
@@ -413,6 +494,12 @@ class Window(FluentWindow):
 
         # 添加处理器到日志器
         logger.addHandler(file_handler)
+        # 噪音库降级到 WARNING：httpx/httpcore/urllib3 等默认 DEBUG，下载时每步 TCP/TLS 都同步
+        # 写日志文件（一张图几十条 connect_tcp/start_tls），阻塞 asyncio 事件循环拖慢下载且刷屏。
+        # 应用自身 logging.info/debug 不受影响。
+        for _name in ('httpx', 'httpcore', 'httpcore.http1', 'httpcore.http2',
+                      'urllib3', 'asyncio'):
+            logging.getLogger(_name).setLevel(logging.WARNING)
         logging.info("应用程序启动")
 
     def closeEvent(self, event):

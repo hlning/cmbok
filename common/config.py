@@ -43,6 +43,9 @@ class Config(QConfig):
     toolSaveFolder = ConfigItem(
         "Folders", "ToolSaveFolder", "app/download/convert", FolderValidator())
 
+    # 去白边预设（JSON 数组：[{name, threshold, padding, width, height}]）
+    trim_presets = ConfigItem("Tool", "TrimPresets", '[]')
+
     # 窗口宽度
     windowWidth = RangeConfigItem("Width", "WindowWidth", 1225, RangeValidator(950, 1920))
 
@@ -105,7 +108,7 @@ class Config(QConfig):
     # software update
     checkUpdateAtStartUp = ConfigItem("Update", "CheckUpdateAtStartUp", True, BoolValidator())
 
-    version = ConfigItem("Update", "Version", 'V2.0.1')
+    version = ConfigItem("Update", "Version", 'V2.0.2')
 
     year = ConfigItem("Update", "Year", date.today().year)
 
@@ -116,6 +119,8 @@ class Config(QConfig):
     copy_url = ConfigItem("CopyVersion", "CopyUrl", 'https://api.copy3000.com/')
 
     zlibrary_url = ConfigItem("ZlibraryVersion", "ZlibraryUrl", 'zh.zlibrary.by')
+    # z-library 候选节点列表（JSON 字符串数组，按延迟升序；启动探测选优后写入，运行时连接失败自动切换）
+    zlibrary_url_candidates = ConfigItem("ZlibraryVersion", "ZlibraryUrlCandidates", '[]')
 
     # 拷贝漫画 authorization token（可选，留空则匿名访问；参考 Breeze 插件 auth.token）
     copy_token = ConfigItem("CopyVersion", "CopyToken", '')
@@ -146,7 +151,7 @@ class Config(QConfig):
     collect_search_history = ConfigItem("SearchHistory", "Collect", '[]')
     download_search_history = ConfigItem("SearchHistory", "Download", '[]')
 
-VERSION_NO = 'V2.0.1'
+VERSION_NO = 'V2.0.2'
 YEAR = date.today().year
 AUTHOR = "甜甜的王甜甜"
 HELP_URL = "https://support.qq.com/products/656074"
@@ -158,6 +163,8 @@ NOTIFICATION_URL = "https://cdn.jsdelivr.net/gh/hlning/cmbok@main/notification.j
 # 地址配置：仓库内 url_config.json，启动时拉取更新 copy_url/zlibrary_url
 URL_CONFIG_URL = "https://cdn.jsdelivr.net/gh/hlning/cmbok@main/url_config.json"
 QQ_URL = "https://qun.qq.com/universal-share/share?ac=1&authKey=UJg9rCpoodLcpWGfFguhn9aRBO8i%2FMeQROFiMa5Xaw1DoTtz7JOEOvRcobUAhxAf&busi_data=eyJncm91cENvZGUiOiIxMDAzNzczMDA1IiwidG9rZW4iOiJnQ0dBWlRkOVdKQ3BteGhjSkFNcnVlZ1RPcmRQK3JFaVJuWS9mblNheXBZVUxwaEVNTVRCVENDaVdXTUxlQ2RiIiwidWluIjoiMjMyODg5MzYxMiJ9&data=eR26EQcAE3uiE4QF0IUFlX0NH1JUHyxoAGZbJnsHiT_-88NWV2Ybbp8q9OwC3va4LBGNHTyq_dJqeEZd14dK7Q&svctype=4&tempid=h5_group_info"
+# 作者个人主页（软件/版本发布更新地）
+SITE_URL = "https://bluemood.xiaomy.net/"
 LOG_PATH = 'app/app.log'
 
 cfg = Config()

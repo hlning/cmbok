@@ -1,12 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+from PyInstaller.utils.hooks import collect_submodules
+
 
 a = Analysis(
     ['cmbok.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('zeroconf'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -35,7 +38,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['resource\\images\\logo.ico'],
+    icon=[os.path.join(SPECPATH, 'resource', 'images', 'logo.ico')],
 )
 coll = COLLECT(
     exe,

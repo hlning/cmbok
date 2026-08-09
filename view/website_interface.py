@@ -3,21 +3,22 @@ import json
 import logging
 import math
 import os
+import re
 import time
 import traceback
 import uuid
 from functools import partial
 
-from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent, QRectF, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QUrl, QTimer, QEvent, QRectF, QSize, QObject
 from PyQt5.QtGui import QPixmap, QMovie, QCursor, QIcon, QColor, QPainter, QDesktopServices, QPainterPath
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEnginePage, QWebEngineProfile, QWebEngineDownloadItem
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QStackedWidget, QMainWindow, \
     QDesktopWidget, QFrame, QFileDialog
 from qfluentwidgets import ScrollArea, CardWidget, ElevatedCardWidget, BodyLabel, FlowLayout, SearchLineEdit, SegmentedToolWidget, \
     FluentIcon, InfoBarPosition, Flyout, \
     FlyoutAnimationType, InfoBarIcon, PipsPager, PipsScrollButtonDisplayMode, FlyoutViewBase, PrimaryPushButton, \
-    SingleDirectionScrollArea, CheckBox, StateToolTip, MessageBox, MessageBoxBase, TransparentToolButton, LineEdit, \
+    SingleDirectionScrollArea, CheckBox, StateToolTip, MessageBox, MessageBoxBase, TransparentToolButton, LineEdit, ComboBox, \
     Theme, PrimaryToolButton, themeColor, isDarkTheme, ThemeColor
 
 from common.config import cfg
@@ -25,9 +26,12 @@ from common.sqlite_util import SQLiteDatabase
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import ComicWebsiteChapterImages, EpubThread, WebsiteChapterFetchThread
-from utils.base_utils import truncate_string, get_current_time, get_directories
+from utils.base_utils import truncate_string, get_current_time, get_directories, deal_url, get_file_extension
+from utils.image_restore import restore_image
+from utils.client_util import get_system_proxy
 from utils.utils_files_and_folders import del_folder, move_files
 from view.components.auto_flow_layout import AutoFlowLayout
+from view.components.detail_dialog_base import present_detail_dialog, content_parent
 from view.components.empty_state_widget import EmptyStateWidget
 from view.components.info_bar_tip import show_tip
 
@@ -126,6 +130,9 @@ class WebsiteInterface(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setObjectName('WebsiteInterface')
+        # 站点列表脏标记：首次访问需渲染；站点增删改后已自行立即 search(None) 刷新，
+        # 故切回网站页时仅在脏（首次未渲染）时重建，避免每次切换都 takeAllWidgets+重建卡片
+        self._website_dirty = True
 
         self.titleLabel = QLabel('🖥️漫画站点', self)
         self.titleLabel.setObjectName('viewTitleLabel')
@@ -218,17 +225,23 @@ class WebsitWidget(QWidget):
             self.addBtn.clicked.connect(self.addWebsite)
             self.searchLayout.addWidget(self.addBtn)
 
-            self.importBtn = PrimaryToolButton(FluentIcon.DOWNLOAD)
+            self.importBtn = PrimaryToolButton(FluentIcon.DOWN)
             self.importBtn.setFixedSize(36, 36)
             self.importBtn.setToolTip('导入站点')
             self.importBtn.clicked.connect(self.importWebsite)
             self.searchLayout.addWidget(self.importBtn)
 
-            self.exportBtn = PrimaryToolButton(FluentIcon.IMAGE_EXPORT)
+            self.exportBtn = PrimaryToolButton(FluentIcon.UP)
             self.exportBtn.setFixedSize(36, 36)
             self.exportBtn.setToolTip('导出站点')
             self.exportBtn.clicked.connect(self.exportWebsite)
             self.searchLayout.addWidget(self.exportBtn)
+
+            self.downloadMgrBtn = PrimaryToolButton(FluentIcon.DOWNLOAD)
+            self.downloadMgrBtn.setFixedSize(36, 36)
+            self.downloadMgrBtn.setToolTip('下载管理（跨域站点）')
+            self.downloadMgrBtn.clicked.connect(self.openDownloadManager)
+            self.searchLayout.addWidget(self.downloadMgrBtn)
         self.searchLayout.addStretch()
         self.vBoxLayout.addLayout(self.searchLayout)
 
@@ -272,12 +285,15 @@ class WebsitWidget(QWidget):
 
     # 新增站点
     def addWebsite(self):
-        dlg = WebsiteEditDialog(self.window())
-        if dlg.exec():
+        win = self.window()
+        dlg = WebsiteEditDialog(content_parent(win))
+        def _on_accepted():
             with SQLiteDatabase() as db:
                 db.insert_data('comic_website', dlg.get_data())
             self.search(None)
-            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '新增成功', self.window(), InfoBarPosition.TOP)
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '新增成功', win, InfoBarPosition.TOP)
+        dlg.accepted.connect(_on_accepted)
+        present_detail_dialog(dlg)
 
     # 导出站点：弹窗勾选要导出的站点，序列化为 JSON 写入用户选择的文件
     def exportWebsite(self):
@@ -353,6 +369,21 @@ class WebsitWidget(QWidget):
         show_tip(InfoBarIcon.SUCCESS, '温馨提示', f'导入完成：新增 {inserted} 个，覆盖更新 {updated} 个',
                  self.window(), InfoBarPosition.TOP)
 
+    # 打开下载管理窗口（跨域站点的下载任务）
+    def openDownloadManager(self):
+        from view.website_download_manager import WebsiteDownloadManagerWindow
+        # 单例：已打开则激活，否则新建并持有引用防 GC
+        dm = getattr(self, '_downloadManager', None)
+        if dm is None or not dm.isVisible():
+            self._downloadManager = WebsiteDownloadManagerWindow(self.window())
+            self._downloadManager.show()
+        else:
+            # 最小化时 raise_/activateWindow 不会取消最小化，需先恢复窗口状态
+            if dm.isMinimized():
+                dm.setWindowState(dm.windowState() & ~Qt.WindowMinimized)
+            dm.raise_()
+            dm.activateWindow()
+
     # 设置页码
     def setPage(self, text):
         if self.type == 1:
@@ -389,8 +420,12 @@ class WebsitWidget(QWidget):
                         chapter_link_dom=website.chapter_link_dom,
                         img_dom=website.img_dom,
                         use_frame=website.use_frame,
+                        cross_origin=website.cross_origin,
+                        restore_algorithm=website.restore_algorithm,
                         chapter_order=website.chapter_order,
-                        scroll_to_load=website.scroll_to_load,
+                        img_load_mode=website.img_load_mode,
+                        next_page_selector=website.next_page_selector,
+                        page_label_selector=website.page_label_selector,
                         img_attr=website.img_attr,
                         img_script=website.img_script,
                         type=self.type
@@ -453,21 +488,42 @@ class WebsiteEditDialog(MessageBoxBase):
         ('img_attr', '图片懒加载属性（如data-src，留空自动检测）', 'line', False, ''),
         ('img_script', 'iframe取图脚本（可选，用变量ifr，需return数组）', 'line', False, ''),
         ('use_frame', '是否用iframe加载（直连取不到图时勾选）', 'check', False, 0),
+        ('cross_origin', '是否跨域（图片与站点不同域时勾选）', 'check', False, 0),
+        ('restore_algorithm', '图片恢复算法', 'combo', False, '', [('无', ''), ('腐漫', '腐漫')]),
         ('chapter_order', '章节倒序（最新话在前，配合合并成卷）', 'check', False, 1),
-        ('scroll_to_load', '图片滚到底部加载（懒加载站点勾选）', 'check', False, 1),
+        ('img_load_mode', '图片加载方式', 'combo', False, 2, [('滚动加载', 1), ('滚到底部加载', 2), ('下一页加载', 3)]),
+        ('next_page_selector', '下一页按钮选择器（留空则点击图片右侧翻页；上下页同 class 时加 :eq(n) 取第 n 个，如 .pager:eq(2)）', 'line', False, ''),
+        ('page_label_selector', '页码标签选择器（可选，指向 5/30 这类文本用于判断末页）', 'line', False, ''),
     ]
 
     def __init__(self, parent=None, data=None):
         super().__init__(parent)
         self.edits = {}
+        self._labels = {}  # key -> BodyLabel，用于联动显隐
         data = data or {}
         form = QVBoxLayout()
         form.setSpacing(4)
-        for key, label, ctype, required, default in self.FIELDS:
+        for field in self.FIELDS:
+            key, label, ctype = field[0], field[1], field[2]
+            required = field[3]
+            default = field[4]
+            options = field[5] if len(field) > 5 else None
             val = data.get(key, default)
             if ctype == 'check':
                 cb = CheckBox(label, self)
                 cb.setChecked(val in (1, '1', True))
+                form.addWidget(cb)
+                self.edits[key] = cb
+            elif ctype == 'combo':
+                lbl = BodyLabel(label, self)
+                lbl.setFixedHeight(20)
+                form.addWidget(lbl)
+                self._labels[key] = lbl
+                cb = ComboBox(self)
+                for text, v in options:
+                    cb.addItem(text, userData=v)
+                idx = next((i for i in range(cb.count()) if cb.itemData(i) == val), 0)
+                cb.setCurrentIndex(idx)
                 form.addWidget(cb)
                 self.edits[key] = cb
             else:
@@ -475,10 +531,14 @@ class WebsiteEditDialog(MessageBoxBase):
                 lbl = BodyLabel(title, self)
                 lbl.setFixedHeight(20)
                 form.addWidget(lbl)
+                self._labels[key] = lbl
                 edit = LineEdit(self)
                 edit.setText(str(val) if val not in (None, '') else '')
                 form.addWidget(edit)
                 self.edits[key] = edit
+        # 联动：图片加载方式=下一页加载(3)时才显示下一页按钮选择器/页码标签选择器
+        self._toggle_load_mode_fields()
+        self.edits['img_load_mode'].currentIndexChanged.connect(self._toggle_load_mode_fields)
         # 用滚动区包裹表单：主窗口高度不足时滚动，避免标题被挤压到输入框
         scroll = _FormScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -493,10 +553,22 @@ class WebsiteEditDialog(MessageBoxBase):
         self.viewLayout.addWidget(scroll)
         self.yesButton.setText('保存')
         self.cancelButton.setText('取消')
-        self.widget.setMinimumWidth(440)
+        self.widget.setMinimumWidth(560)
+
+    def _toggle_load_mode_fields(self):
+        """图片加载方式=下一页加载时才显示 next_page_selector/page_label_selector"""
+        is_next = self.edits['img_load_mode'].currentData() == 3
+        for k in ('next_page_selector', 'page_label_selector'):
+            lbl = self._labels.get(k)
+            w = self.edits.get(k)
+            if lbl is not None:
+                lbl.setVisible(is_next)
+            if w is not None:
+                w.setVisible(is_next)
 
     def validate(self):
-        for key, label, ctype, required, default in self.FIELDS:
+        for field in self.FIELDS:
+            key, label, ctype, required = field[0], field[1], field[2], field[3]
             if ctype == 'line' and required and not self.edits[key].text().strip():
                 show_tip(InfoBarIcon.WARNING, '温馨提示', f'请填写{label}', self)
                 return False
@@ -504,10 +576,13 @@ class WebsiteEditDialog(MessageBoxBase):
 
     def get_data(self):
         result = {}
-        for key, label, ctype, required, default in self.FIELDS:
+        for field in self.FIELDS:
+            key, ctype = field[0], field[2]
             w = self.edits[key]
             if ctype == 'check':
                 result[key] = 1 if w.isChecked() else 0
+            elif ctype == 'combo':
+                result[key] = w.currentData()
             else:
                 result[key] = w.text().strip()
         return result
@@ -564,7 +639,8 @@ class WebsiteExportDialog(MessageBoxBase):
 class WebsiteCard(ElevatedCardWidget):
     def __init__(self, id, name, icon, url, comic_cover_dom=None, comic_name_dom=None,
                  chapter_name_dom=None, chapter_link_dom=None, img_dom=None, use_frame=None,
-                 chapter_order=None, scroll_to_load=None, img_attr=None, img_script=None, type=1, parent=None):
+                 cross_origin=None, restore_algorithm=None, chapter_order=None, img_load_mode=None, next_page_selector=None, page_label_selector=None,
+                 img_attr=None, img_script=None, type=1, parent=None):
         super().__init__(parent)
         self.type = type
         self.site_id = id
@@ -572,8 +648,9 @@ class WebsiteCard(ElevatedCardWidget):
             'name': name, 'icon': icon, 'url': url,
             'comic_cover_dom': comic_cover_dom or '', 'comic_name_dom': comic_name_dom or '',
             'chapter_name_dom': chapter_name_dom or '', 'chapter_link_dom': chapter_link_dom or '',
-            'img_dom': img_dom or '', 'use_frame': use_frame, 'chapter_order': chapter_order,
-            'scroll_to_load': scroll_to_load, 'img_attr': img_attr or '',
+            'img_dom': img_dom or '', 'use_frame': use_frame, 'cross_origin': cross_origin, 'restore_algorithm': restore_algorithm or '', 'chapter_order': chapter_order,
+            'img_load_mode': img_load_mode, 'next_page_selector': next_page_selector or '',
+            'page_label_selector': page_label_selector or '', 'img_attr': img_attr or '',
             'img_script': img_script or ''
         }
 
@@ -582,7 +659,8 @@ class WebsiteCard(ElevatedCardWidget):
         self.iconWidget.setFixedSize(150, 55)
         self.load_image(icon)
 
-        self.titleLabel = BodyLabel(truncate_string(name, 15), self)
+        self._fullName = name
+        self.titleLabel = BodyLabel(name, self)
         self.titleLabel.setToolTip(name)
 
         self.editBtn = PrimaryFlatToolButton(FluentIcon.EDIT)
@@ -599,7 +677,8 @@ class WebsiteCard(ElevatedCardWidget):
         self.setFixedWidth(260)
         self.setFixedHeight(110)
 
-        self.mainLayout.setContentsMargins(15, 10, 0, 10)
+        # 上下边距 8（原 10）：为两行名称留出空间（icon55+间距6+两行30≈91，边距8 内容94 可容）
+        self.mainLayout.setContentsMargins(15, 8, 0, 8)
         self.mainLayout.setSpacing(12)
 
         # 左侧：封面 + 名称（水平居中）
@@ -622,19 +701,79 @@ class WebsiteCard(ElevatedCardWidget):
 
         self.iconWidget.mousePressEvent = partial(self.go_website, url, comic_cover_dom, comic_name_dom,
                                                   chapter_name_dom, chapter_link_dom, img_dom,
-                                                  img_attr, img_script, use_frame, chapter_order, scroll_to_load)
+                                                  img_attr, img_script, use_frame, chapter_order,
+                                                  img_load_mode, next_page_selector, page_label_selector, cross_origin, restore_algorithm)
 
         # 用于保存打开的新窗口实例
         self.new_windows = []
 
+        self._elideTitle()
+
+    def _elideTitle(self):
+        """尽可能显示全名：一行放得下就一行；否则两行均衡切分（按字符中点，两行宽度接近、视觉对称）；
+        超两行则第二行 … 省略。卡片高度恒定（setFixedHeight(110)），同一行高度一致。
+        宽度按卡片几何推算（左列 ≈ 卡片宽 - 左边距15 - 右侧按钮列28 - 间距12），留 5px 余量避免贴边裁切。"""
+        fm = self.titleLabel.fontMetrics()
+        w = self.width() - 60
+        if w <= 0:
+            return
+        full = self._fullName or ''
+        if not full or fm.horizontalAdvance(full) <= w:
+            self.titleLabel.setText(full)
+            return
+        # 两行均衡切分：按字符中点切，两行都 ≤ w 则全显示（视觉对称）
+        mid = len(full) // 2
+        line1, line2 = full[:mid], full[mid:]
+        if fm.horizontalAdvance(line1) <= w and fm.horizontalAdvance(line2) <= w:
+            self.titleLabel.setText(line1 + '\n' + line2)
+            return
+        # 超过两行：第一行逐字填满，第二行放得下则全显示，否则末尾 … 省略
+        chars = list(full)
+        n = len(chars)
+        i = 0
+        line1 = ''
+        while i < n and fm.horizontalAdvance(line1 + chars[i]) <= w:
+            line1 += chars[i]
+            i += 1
+        if not line1:
+            # 兜底：极窄宽度下单行省略
+            self.titleLabel.setText(fm.elidedText(full, Qt.ElideRight, w))
+            return
+        rest = full[i:]
+        ell = '…'
+        if fm.horizontalAdvance(rest) <= w:
+            line2 = rest
+        else:
+            ellw = fm.horizontalAdvance(ell)
+            line2 = ''
+            j = 0
+            m = len(rest)
+            while j < m and fm.horizontalAdvance(line2 + rest[j]) + ellw <= w:
+                line2 += rest[j]
+                j += 1
+            line2 += ell
+        self.titleLabel.setText(line1 + '\n' + line2)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elideTitle()
+
     # 编辑站点
     def editWebsite(self):
-        dlg = WebsiteEditDialog(self.window(), self.site_data)
-        if dlg.exec():
+        win = self.window()
+        site_id = self.site_id
+        dlg = WebsiteEditDialog(content_parent(win), self.site_data)
+        def _on_accepted():
             with SQLiteDatabase() as db:
-                db.update_data('comic_website', dlg.get_data(), {'id': self.site_id})
-            self.refresh()
-            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '修改成功', self.window(), InfoBarPosition.TOP)
+                db.update_data('comic_website', dlg.get_data(), {'id': site_id})
+            # 卡片可能已被新搜索重建（弹窗开着时在搜索框输入触发 takeAllWidgets），此时 refresh 无意义
+            try:
+                self.refresh()
+            except RuntimeError:
+                pass
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '修改成功', win, InfoBarPosition.TOP)
+        dlg.accepted.connect(_on_accepted)
+        present_detail_dialog(dlg)
 
     # 删除站点
     def deleteWebsite(self):
@@ -658,10 +797,12 @@ class WebsiteCard(ElevatedCardWidget):
         self.new_windows = []
 
     def go_website(self, url, comic_cover_dom, comic_name_dom, chapter_name_dom, chapter_link_dom,
-                   img_dom, img_attr, img_script, use_frame, chapter_order, scroll_to_load, event):
+                   img_dom, img_attr, img_script, use_frame, chapter_order,
+                   img_load_mode, next_page_selector, page_label_selector, cross_origin, restore_algorithm, event):
         try:
             window = Browser(url, comic_cover_dom, comic_name_dom, chapter_name_dom, chapter_link_dom,
-                             img_dom, img_attr, img_script, use_frame, chapter_order, scroll_to_load)
+                             img_dom, img_attr, img_script, use_frame, chapter_order,
+                             img_load_mode, next_page_selector, page_label_selector, cross_origin, restore_algorithm)
             window.show()
             # 保存新窗口的实例
             self.new_windows.append(window)
@@ -748,9 +889,332 @@ class BrowserView(QWebEngineView):
         child.deleteLater()
 
 
+class _FrameFetchWorker(QObject):
+    """iframe 取图工作单元：一个 QWebEngineView 串行处理队列中的章节。
+
+    多个 worker 并发即多窗口并发取图（数量=下载线程数）。每个 worker 独立 page，
+    window._fetchResult 互不串话。完成后回调 browser._on_worker_extracted(self, data)。
+    QWebEngineView 必须在主线程，故走 Qt 事件循环（runJavaScript 回调 + QTimer）协作式并发。
+    """
+
+    def __init__(self, browser):
+        super().__init__(browser)
+        self.browser = browser
+        self.view = QWebEngineView(browser)
+        self.view.setWindowTitle('章节取图（自动关闭，请勿关闭）')
+        self.view.resize(900, 700)
+        # 去掉关闭按钮，禁止用户交互（仅标题栏+最小化）
+        self.view.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint)
+        # 关闭取图窗口不应触发应用退出（与主窗口退出隔离）
+        self.view.setAttribute(Qt.WA_QuitOnClose, False)
+        self.view.loadFinished.connect(self._on_loaded)
+        # 防抖定时器：章节页若有客户端重定向(loadFinished 多次触发)，等稳定后再提取
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self._extract)
+        try:
+            self.view.page().setBackgroundColor(QColor('#1a1a1a'))
+        except Exception:
+            pass
+        # 拦截窗口移动事件：拖动一个取图窗口时其他窗口跟随（Browser.eventFilter 处理）
+        self.view.installEventFilter(browser)
+        # 取图遮罩：独立半透明置顶窗口覆盖客户区，阻止用户操作页面（从打开到关闭全程在位）
+        self.mask = QWidget(self.view, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.mask.setAttribute(Qt.WA_QuitOnClose, False)
+        self.mask.setStyleSheet('background: rgba(26,26,26,0.85);')
+        _ml = QVBoxLayout(self.mask)
+        _ml.setContentsMargins(0, 0, 0, 0)
+        _lbl = QLabel('正在取图，请勿操作...')
+        _lbl.setStyleSheet('color:#ffffff;font-size:22px;font-family:sans-serif;')
+        _lbl.setAlignment(Qt.AlignCenter)
+        _ml.addWidget(_lbl)
+        # worker 自身作 eventFilter：view 移动/缩放/显示时蒙版跟随对齐（browser 拖动跟随 filter 不受影响）
+        self.view.installEventFilter(self)
+        # 贴主窗口右上角（多窗口同一位置重叠）
+        try:
+            g = browser.frameGeometry()
+            self.view.move(g.x() + g.width() - self.view.width(), g.y())
+        except Exception:
+            pass
+        self.cur = None
+        self.poll = 0
+
+    def fetch(self, item):
+        """加载一个章节页并取图，完成后回调 browser._on_worker_extracted"""
+        self.cur = item
+        self.poll = 0
+        self.view.show()
+        self.mask.show()
+        self._align_mask()
+        logging.info(f'[站点下载] 取图窗口加载: {item["chapter_name"]} | {item["link"]}')
+        try:
+            self.view.load(QUrl(item['link']))
+        except Exception:
+            logging.info('[站点下载] 取图窗口加载异常: ' + traceback.format_exc())
+            self.browser._on_worker_extracted(self, {'comic_name': item['comic_name'], 'chapter_name': item['chapter_name'],
+                                                      'imgs': [], 'note': '取图窗口加载异常'})
+
+    def _align_mask(self):
+        """遮罩窗口对齐覆盖取图窗口的客户区（留出标题栏）"""
+        if self.view is not None and getattr(self, 'mask', None) is not None:
+            try:
+                self.mask.setGeometry(self.view.geometry())
+                self.mask.raise_()
+                self.mask.show()
+            except Exception:
+                pass
+
+    def eventFilter(self, obj, event):
+        # 取图窗口移动/缩放/显示时蒙版跟随对齐；最小化(Hide)时隐藏蒙版避免悬浮
+        if obj is self.view:
+            t = event.type()
+            if t in (QEvent.Move, QEvent.Resize, QEvent.Show):
+                self._align_mask()
+            elif t == QEvent.Hide and getattr(self, 'mask', None) is not None:
+                try:
+                    self.mask.hide()
+                except Exception:
+                    pass
+        return super().eventFilter(obj, event)
+
+    def _on_loaded(self, ok):
+        if self.view is None:
+            return
+        # 跳过初始蒙版页（about:blank 等非 http），只处理章节页
+        url = self.view.url().toString()
+        if not url.startswith('http'):
+            return
+        item = self.cur
+        if not item:
+            return
+        if not ok:
+            logging.info(f'[站点下载] 取图窗口加载失败: {item["chapter_name"]}')
+            self.browser._on_worker_extracted(self, {'comic_name': item['comic_name'], 'chapter_name': item['chapter_name'],
+                                                      'imgs': [], 'note': '取图窗口加载失败'})
+            return
+        # 防抖：每次 loadFinished 都重启定时器，等页面稳定(无重定向)后再提取
+        self.timer.start(1500)
+
+    def _extract(self):
+        if self.view is None or not self.cur:
+            return
+        item = self.cur
+        body = item['body']
+        meta = item['meta']
+        logging.info(f'[站点下载] 开始提取图片: {item["chapter_name"]}')
+        # runJavaScript 不等待 async Promise，故 JS 把结果写到 window._fetchResult，Python 轮询读取
+        js_code = """
+        (async function(){
+            var META = """ + meta + """;
+            window._fetchResult = null;
+            var ifr = { contentWindow: window, contentDocument: document };
+            var note = '';
+            var imgs = [];
+            try {
+                var fn = (async function(ifr){
+                    """ + body + """
+                });
+                var val = await fn(ifr);
+                imgs = Array.isArray(val) ? val : (val ? [val] : []);
+            } catch(e) { note = 'JS异常:' + String(e); }
+            if (imgs.length === 0) {
+                try {
+                    note += ' | 标题=' + document.title + ' body长度=' + (document.body ? document.body.innerHTML.length : 0)
+                        + ' img数=' + document.querySelectorAll('img').length + ' URL=' + window.location.href;
+                    if (window.__NUXT__) note += ' | 含__NUXT__';
+                    if (window.__NEXT_DATA__) note += ' | 含__NEXT_DATA__';
+                } catch(e2) {}
+            }
+            note += ' | 滚动诊断: ' + (window._scrollDiag || '无');
+            window._fetchResult = JSON.stringify({ 'comic_name': META.comic_name, 'chapter_name': META.chapter_name, 'imgs': imgs, 'note': note, 'chapter_link': META.chapter_link });
+        })();
+        """
+        self.view.page().runJavaScript(js_code)
+        self.poll = 0
+        self._poll()
+
+    def _poll(self):
+        if self.view is None:
+            return
+        self.poll += 1
+        self.view.page().runJavaScript('window._fetchResult', self._on_poll)
+
+    def _on_poll(self, result):
+        if result:
+            # 读到结果，清空全局，解析
+            self.view.page().runJavaScript('window._fetchResult = null')
+            import json as _json
+            try:
+                data = _json.loads(result) if isinstance(result, str) else result
+            except Exception:
+                logging.info(f'[站点下载] 提取回调JSON解析失败: {str(result)[:200]}')
+                data = None
+            logging.info(f'[站点下载] 提取回调原始: {str(data)[:200]}')
+            self.browser._on_worker_extracted(self, data)
+        elif self.poll < 12000:  # 下一页模式页数可能上百，每页含翻页等待+图片加载，给600s轮询
+            QTimer.singleShot(500, self._poll)
+        else:
+            logging.info('[站点下载] 提取超时(600s)未拿到结果')
+            self.browser._on_worker_extracted(self, None)
+
+    def close(self):
+        """取图完成/失败时关闭并清理本窗口"""
+        try:
+            self.timer.stop()
+        except Exception:
+            pass
+        if self.view is not None:
+            try:
+                self.view.loadFinished.disconnect()
+            except Exception:
+                pass
+            try:
+                self.view.close()
+                self.view.deleteLater()
+            except Exception:
+                pass
+            self.view = None
+        # 关闭并清理遮罩窗口
+        if getattr(self, 'mask', None) is not None:
+            try:
+                self.mask.close()
+                self.mask.deleteLater()
+            except Exception:
+                pass
+            self.mask = None
+
+
+class _CrossDownloadWorker(QObject):
+    """跨域单章图片下载：浏览器加载章节页建立会话(cookie/JS/Cloudflare) -> 提取 cookie -> httpx 并发下载。
+
+    每章一份独立 profile/view/cookies，多 worker 并发不串话（替代原 Browser 共享的 self._cross_*）。
+    为何不用 a.click()+downloadRequested：a.download 对跨域资源被 Chromium 忽略、图片会变成页面导航；
+    且 runJavaScript 触发的 a.click() 无用户手势，Chromium 拦截无手势的跨域下载。故浏览器仅用于建会话，取图仍交 httpx。
+    """
+
+    progress = pyqtSignal(int, int)   # (done, total) 当前章节图片粒度进度
+    success = pyqtSignal(str)         # comic_name（章节下载完成）
+
+    def __init__(self, browser, comic_name, chapter_name, urls, referer, restore_algorithm):
+        super().__init__(browser)
+        self.browser = browser
+        self.comic_name = comic_name
+        self.chapter_name = chapter_name
+        self.urls = urls
+        self.referer = referer
+        self.restore_algorithm = restore_algorithm
+        self.cookies = {}        # 浏览器加载章节页过程收集到的 cookie（name -> value）
+        self.done = 0
+        self.total = len(urls)
+        self.profile = None
+        self.page = None
+        self.view = None
+        self._dl = None          # ComicWebsiteChapterImages 引用（自持防 GC）
+
+    def start(self):
+        if not self.urls:
+            # 0 图片章节：不建会话、不建目录，直接完成（与 0 图片兜底一致，避免 epub 合并空目录崩溃）
+            self.success.emit(self.comic_name)
+            return
+        # 独立 profile 加载章节页建立会话；cookieAdded 收集全部 cookie（含 JS 设置的）
+        self.profile = QWebEngineProfile(self.browser)
+        self.profile.cookieStore().cookieAdded.connect(self._on_cookie)
+        self.page = QWebEnginePage(self.profile, self.browser)
+        self.view = QWebEngineView(self.browser)
+        self.view.setPage(self.page)
+        # QtWebEngine 需 widget 进入事件循环才会触发 load，用最小化窗口承载（不干扰用户），关闭不触发应用退出
+        self.view.setWindowTitle('跨域图片下载（自动，请勿关闭）')
+        self.view.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint)
+        self.view.setAttribute(Qt.WA_QuitOnClose, False)
+        self.view.resize(400, 300)
+        self.view.showMinimized()
+        # 加载章节页建立 cookie/referer，加载完成后提取 cookie 转 httpx 下载
+        self.view.load(QUrl(self.referer))
+        self.view.loadFinished.connect(self._on_loaded)
+
+    def _on_cookie(self, cookie):
+        """收集 cookieAdded 信号：浏览器加载章节页过程设置的全部 cookie（name -> value）。"""
+        try:
+            name = bytes(cookie.name()).decode('utf-8', 'ignore')
+            value = bytes(cookie.value()).decode('utf-8', 'ignore')
+            if name:
+                self.cookies[name] = value
+        except Exception:
+            pass
+
+    def _on_loaded(self, ok):
+        # 章节页加载完成，cookie 已在 _on_cookie 收集；断开信号避免重定向多次触发
+        try:
+            self.view.loadFinished.disconnect(self._on_loaded)
+        except Exception:
+            pass
+        # 兜底：loadAllCookies 重新枚举存储中全部 cookie（捕获 loadFinished 前已设置但信号未到的）
+        try:
+            self.profile.cookieStore().loadAllCookies()
+        except Exception:
+            pass
+        # 留 500ms 让 cookieAdded 信号 + JS 设置的 cookie 落定，再开 httpx 下载
+        QTimer.singleShot(500, self._start_download)
+
+    def _start_download(self):
+        logging.info(f'[站点下载] 跨域会话 cookie 提取完成({len(self.cookies)}条)，转 httpx 下载 {len(self.urls)} 张图片 | 章节: {self.chapter_name}')
+        # cookie 已提取，浏览器视图不再需要，立即释放
+        self._cleanup_view()
+        self.done = 0
+        self.total = len(self.urls)
+        # 复用同域 httpx 下载线程（10 次重试 + restore_image + 文件名规则一致），带 cookie + referer
+        # 跨域走显式代理（Windows 系统代理，与浏览器同源），None=无系统代理则直连
+        self._dl = ComicWebsiteChapterImages(
+            comic_name=self.comic_name, chapter_name=self.chapter_name, chapter_images=self.urls,
+            referer=self.referer, cookies=self.cookies, restore_algorithm=self.restore_algorithm,
+            proxy=get_system_proxy(), cross_origin=True)
+        self._dl.progress.connect(self._on_img_progress)
+        self._dl.success.connect(self._on_dl_success)
+        self._dl.finished.connect(self._on_dl_finished)
+        self._dl.start()
+
+    def _on_img_progress(self, done, total):
+        # 当前章节图片粒度进度
+        self.done = done
+        self.total = total
+        self.progress.emit(done, total)
+
+    def _on_dl_success(self, comic_name):
+        self.success.emit(comic_name)
+
+    def _on_dl_finished(self):
+        # QThread 真正结束，丢弃引用
+        self._dl = None
+
+    def _cleanup_view(self):
+        for attr in ('view', 'page', 'profile'):
+            obj = getattr(self, attr, None)
+            if obj is not None:
+                try:
+                    obj.deleteLater()
+                except Exception:
+                    pass
+        self.view = None
+        self.page = None
+        self.profile = None
+
+    def cleanup(self):
+        """整体清理（完成/中断）：仅清浏览器视图。
+        _dl 由 QThread.finished(_on_dl_finished) 释放，不在此时清--success 早于 finished，
+        过早丢引用会让未结束的下载线程被 GC（segfault）。"""
+        self._cleanup_view()
+
+
 class Browser(QMainWindow):
+    # 下载管理（隐藏 Browser）触发下载时回传进度/完成/失败（task_id, ...）
+    progress = pyqtSignal(object, int)    # task_id, process(0-100)
+    finished = pyqtSignal(object, str)    # task_id, path
+    failed = pyqtSignal(object)           # task_id
+
     def __init__(self, url, comic_cover_dom, comic_name_dom, chapter_name_dom, chapter_link_dom,
-                 img_dom, img_attr=None, img_script=None, use_frame=None, chapter_order=None, scroll_to_load=None):
+                 img_dom, img_attr=None, img_script=None, use_frame=None, chapter_order=None,
+                 img_load_mode=None, next_page_selector=None, page_label_selector=None,
+                 cross_origin=None, restore_algorithm=None, hidden=False, task_id=None):
         try:
             super().__init__()
             self.setWindowTitle("漫画站点")
@@ -762,20 +1226,35 @@ class Browser(QMainWindow):
             self.img_script = (img_script or '').strip()
             self.use_frame = use_frame
             self.chapter_order = chapter_order
-            self.scroll_to_load = scroll_to_load
+            self.img_load_mode = img_load_mode
+            self.next_page_selector = (next_page_selector or '').strip()
+            self.page_label_selector = (page_label_selector or '').strip()
+            self.cross_origin = cross_origin or 0
+            self.restore_algorithm = restore_algorithm or ''
+            self.hidden = hidden
+            self.task_id = task_id
             self.browser = BrowserView()
             self.setCentralWidget(self.browser)
 
             self.checked_chapters = []
-            # iframe 模式专用：独立取图窗口（规避 frame-bust），串行处理章节
-            self._fetcher = None
-            self._fetcher_mask = None
+            # iframe 模式专用：取图 worker 池（多窗口并发，数量=下载线程数）
             self._fetch_queue = []
-            self._fetch_busy = False
+            self._fetch_workers = []     # 所有创建的取图 worker（用于清理）
+            self._idle_workers = []      # 空闲 worker（可复用，避免反复起停渲染进程）
+            self._busy_workers = []      # 正在取图的 worker
+            self._max_fetchers = 1       # 并发取图窗口数（launch_iframes 按下载线程数设置）
+            # 跨域下图 worker 列表（每章一个，并发下图，进度聚合）
+            self._cross_workers = []
+            # 同域图片下载线程引用集（并发时防单引用被覆盖丢引用 -> GC segfault）
+            self._chapter_image_threads = set()
+            # 章节细分进度（隐藏/下载管理模式）：总章节数下载前已知，避免按图片总数会回退
+            self._total_chapters = 0
+            self._completed_chapters = 0
+            self._syncing_fetchers = False  # 取图窗口跟随移动防递归标志
 
             # 创建悬浮按钮
             # 下载按钮
-            if chapter_name_dom is not None and chapter_name_dom != 'None' and chapter_name_dom != '':
+            if not self.hidden and chapter_name_dom is not None and chapter_name_dom != 'None' and chapter_name_dom != '':
                 self.chapter_button = PrimaryPushButton(FluentIcon.SEND, '获取章节')
                 self.chapter_button.setFixedSize(140, 30)  # 设置按钮大小
 
@@ -791,28 +1270,39 @@ class Browser(QMainWindow):
                 button_y = self.height() - self.chapter_button.height() - 100  # 距离底部10像素
                 self.chapter_button.move(button_x, button_y)  # 移动按钮到计算的位置
 
-            self.stateTooltip = StateToolTip('正在下载', '请耐心等待~~', self)
+            if not self.hidden:
+                self.stateTooltip = StateToolTip('正在下载', '请耐心等待~~', self)
 
-            tip_width = self.stateTooltip.width()
-            tip_height = self.stateTooltip.height()
-            window_width = self.width()
-            window_height = self.height()
-            x = (window_width - tip_width) // 2
-            y = (window_height - tip_height) // 2
-            self.stateTooltip.move(x, y)
-            self.stateTooltip.hide()
+                tip_width = self.stateTooltip.width()
+                tip_height = self.stateTooltip.height()
+                window_width = self.width()
+                window_height = self.height()
+                x = (window_width - tip_width) // 2
+                y = (window_height - tip_height) // 2
+                self.stateTooltip.move(x, y)
+                self.stateTooltip.hide()
 
-            # 打开指定的网址
-            self.load_page()
-            # 设置窗口图标
-            self.setWindowIcon(QIcon(':/cmbok/images/logo.png'))  # 替换为您的图标文件路径
-            # 获取屏幕的可用尺寸
-            qr = self.frameGeometry()
-            cp = QDesktopWidget().availableGeometry().center()  # 获取屏幕中心
-            qr.moveCenter(cp)  # 将窗口移动到中心
-            self.move(qr.topLeft())  # 设置窗口的位置
+                # 打开指定的网址
+                self.load_page()
+                # 设置窗口图标
+                self.setWindowIcon(QIcon(':/cmbok/images/logo.png'))  # 替换为您的图标文件路径
+                # 获取屏幕的可用尺寸
+                qr = self.frameGeometry()
+                cp = QDesktopWidget().availableGeometry().center()  # 获取屏幕中心
+                qr.moveCenter(cp)  # 将窗口移动到中心
+                self.move(qr.topLeft())  # 设置窗口的位置
         except Exception:
             logging.info(traceback.format_exc())
+
+    def get_site_config(self):
+        """返回当前站点配置快照（供下载管理保存任务，下载时按此取图）"""
+        return {
+            'img_dom': self.img_dom, 'use_frame': self.use_frame, 'cross_origin': self.cross_origin,
+            'restore_algorithm': self.restore_algorithm,
+            'chapter_order': self.chapter_order, 'img_load_mode': self.img_load_mode,
+            'next_page_selector': self.next_page_selector, 'page_label_selector': self.page_label_selector,
+            'img_attr': self.img_attr, 'img_script': self.img_script,
+        }
 
     def load_page(self):
         self.browser.load(QUrl(self.url))
@@ -925,7 +1415,9 @@ class Browser(QMainWindow):
         """
         self.browser.page().runJavaScript(js_code)
 
-    def downloadComic(self, result, checked_chapters):
+    def downloadComic(self, result, checked_chapters, task_id=None):
+        if task_id is not None:
+            self.task_id = task_id
         # 是否合并成卷
         isMergeChapte = cfg.get(cfg.isMergeChapte)
         if isMergeChapte:
@@ -934,7 +1426,8 @@ class Browser(QMainWindow):
             path = f"{download_folder}/{result['comic_name']}"
             del_folder(path)
 
-        self.stateTooltip.setContent('请耐心等待~~')
+        if not self.hidden:
+            self.stateTooltip.setContent('请耐心等待~~')
         with SQLiteDatabase() as db:
             db.delete_data('website_download_record', {'comic_name': result['comic_name']})
             db.insert_data('website_download_record',
@@ -943,6 +1436,9 @@ class Browser(QMainWindow):
                             'start_time': get_current_time()})
 
         self.checked_chapters = checked_chapters
+        # 章节细分进度：总章节数下载前已知（=选中章节数），当前章节图片进度实时回传、封顶99%、epub100
+        self._total_chapters = len(checked_chapters)
+        self._completed_chapters = 0
         # 按站点章节顺序配置决定是否倒序（倒序=章节阅读顺序，站点章节多为倒序排列；0=顺序）
         if self.chapter_order != 0:
             self.checked_chapters.reverse()
@@ -951,8 +1447,10 @@ class Browser(QMainWindow):
         self.launch_iframes(result['comic_name'])
 
     def launch_iframes(self, comic_name):
-        # 获取最大线程配置
+        # 获取最大线程配置（同域/跨域均按此并发；跨域下图已封装为每章独立 _CrossDownloadWorker，
+        # 不再有共享 _cross_* 串行状态，故不再强制串行）
         downloadThreadNum = cfg.get(cfg.downloadThreadNum)
+        self._max_fetchers = downloadThreadNum
 
         sqlite_util = SQLiteDatabase()
         while True:
@@ -1001,6 +1499,127 @@ class Browser(QMainWindow):
         self.fetchThread.success.connect(self._on_direct_fetched)
         self.fetchThread.start()
 
+    def _build_next_page_js(self, map_expr, _json):
+        """下一页加载取图 JS：点击下一页按钮(配了选择器)或点图片右侧翻页，逐页提取去重，末尾 return collected。
+        整页导航(URL 翻页)站点：collected 经 window.name 跨页持久化，点下一页触发导航后脚本随页面卸载销毁，
+        新页 loadFinished 重新 _extract 读 window.name 续取；SPA 路由(URL 变不卸载)等 500ms 后继续提取。
+        末页判断：①按钮不可用 ②页码标签 当前≥总数 ③无新图且URL未变 ④999页安全阀。"""
+        btn_sel = self.next_page_selector
+        label_sel = self.page_label_selector
+        filter_js = ("s && s.indexOf('logo')===-1 && s.indexOf('load.gif')===-1 "
+                     "&& s.indexOf('blank')===-1 && s.indexOf('data:image')===-1 && s.indexOf('placeholder')===-1")
+        js = (
+            "var btnSel = " + _json.dumps(btn_sel) + ", labelSel = " + _json.dumps(label_sel) + "; "
+            "var collected = [], seen = {}; "
+            "try { var saved = (window.name && window.name.charAt(0)==='{') ? JSON.parse(window.name) : null; "
+            "  if (saved && saved.chap === META.chapter_link && Array.isArray(saved.collected)) { "
+            "    collected = saved.collected.slice(); collected.forEach(function(u){ seen[u]=1; }); "
+            "  } } catch(e) {} "
+            "function saveName(){ try { window.name = JSON.stringify({chap: META.chapter_link, collected: collected}); } catch(e) {} } "
+            "function good(s){ return " + filter_js + "; } "
+            "function pickEl(sel){ "
+            "  if(!sel) return null; "
+            "  var m = sel.match(/:eq\\((\\d+)\\)\\s*$/); "
+            "  try{ "
+            "    if(m){ var idx=parseInt(m[1]); var base=sel.slice(0,m.index); var all=doc?doc.querySelectorAll(base):[]; return (idx>=1 && idx<=all.length)?all[idx-1]:null; } "
+            "    return doc ? doc.querySelector(sel) : null; "
+            "  }catch(e){ return null; } "
+            "} "
+            "function pageImgs(){ "
+            "  var nodes = doc ? doc.querySelectorAll(sel) : []; "
+            "  return Array.from(nodes).map(function(im){ return " + map_expr + "; }).filter(good); "
+            "} "
+            "function addFresh(){ pageImgs().forEach(function(u){ if(!seen[u]){seen[u]=1;collected.push(u);} }); saveName(); } "
+            "function parseLabel(){ "
+            "  if(!labelSel) return null; "
+            "  var el = pickEl(labelSel); if(!el) return null; "
+            "  var t = el.textContent || ''; "
+            "  var m = t.match(/(\\d+)\\D+(\\d+)/); "
+            "  return m ? [parseInt(m[1]), parseInt(m[2])] : null; "
+            "} "
+            "function goNext(){ "
+            "  if(btnSel){ "
+            "    var btn = pickEl(btnSel); "
+            "    if(!btn || btn.disabled) return false; "
+            "    var cls=(typeof btn.className==='string'?btn.className:'')+' '+(btn.getAttribute('class')||''); "
+            "    if(/disabled|inactive|noreply|hide/i.test(cls)) return false; "
+            "    if(btn.getAttribute('aria-disabled')==='true') return false; "
+            "    try{ "
+            "      var href = btn.tagName==='A' ? btn.getAttribute('href') : null; "
+            "      if(href && href.charAt(0)!=='#' && href.indexOf('javascript:')!==0){ location.href = btn.href; } "
+            "      else { "
+            "        var r = btn.getBoundingClientRect(); "
+            "        var cx = r.left + r.width/2, cy = r.top + r.height/2; "
+            "        ['mousedown','mouseup','click'].forEach(function(t){ "
+            "          btn.dispatchEvent(new MouseEvent(t, {bubbles:true, cancelable:true, view:window, clientX:cx, clientY:cy})); "
+            "        }); "
+            "      } "
+            "    }catch(e){return false;} "
+            "    return true; "
+            "  } "
+            "  var main=null, maxA=0; "
+            "  Array.from(doc ? doc.querySelectorAll('img') : []).forEach(function(im){ "
+            "    var r=im.getBoundingClientRect(); var a=r.width*r.height; "
+            "    if(a>maxA && a>10000){maxA=a;main=im;} "
+            "  }); "
+            "  if(!main) return false; "
+            "  var r=main.getBoundingClientRect(); "
+            "  var x=r.left+r.width*0.75, y=r.top+r.height*0.5; "
+            "  var el=doc.elementFromPoint(x,y)||main; "
+            "  ['mousedown','mouseup','click'].forEach(function(t){ "
+            "    el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:x,clientY:y})); "
+            "  }); "
+            "  return true; "
+            "} "
+            "function waitImgs(){ "
+            "  var pendings=[]; "
+            "  (doc ? doc.querySelectorAll('img') : []).forEach(function(im){ "
+            "    if(!im.complete && im.src) pendings.push(new Promise(function(res){im.onload=im.onerror=function(){res();};setTimeout(res,5000);})); "
+            "  }); "
+            "  return pendings.length ? Promise.all(pendings) : Promise.resolve(); "
+            "} "
+            "if (doc && doc.defaultView) { "
+            "  var pages = 0; "
+            "  var noNewCount = 0; "
+            "  var diag = []; "
+            "  var reason = 'unknown'; "
+            "  addFresh(); "
+            "  while(pages < 999){ "
+            "    pages++; "
+            "    var gn = goNext(); "
+            "    var btnInfo = '点图右'; "
+            "    if(btnSel){ var b = pickEl(btnSel); btnInfo = b ? ('dis=' + !!b.disabled + ' tag=' + b.tagName + ' cls=' + String(b.className||'').slice(0,24) + ' href=' + String(b.getAttribute('href')||'').slice(0,30)) : '无按钮'; } "
+            "    if(!gn){ reason='goNext失败[' + btnInfo + ']'; break; } "
+            "    var lab = parseLabel(); "
+            "    if(lab && lab[0] >= lab[1]){ reason='页码标签末页 ' + lab[0] + '/' + lab[1]; break; } "
+            "    var beforeUrl = location.href, beforeCnt = collected.length, beforeImgs = doc.querySelectorAll('img').length; "
+            "    var waited=0; "
+            "    while(waited<2500){ await new Promise(function(r){setTimeout(r,100);}); waited+=100; "
+            "      if(doc.querySelectorAll('img').length!==beforeImgs || location.href!==beforeUrl) break; "
+            "    } "
+            "    if(location.href !== beforeUrl){ "
+            "      await new Promise(function(r){ setTimeout(r, 500); }); "
+            "    } "
+            "    await waitImgs(); "
+            "    addFresh(); "
+            "    var urlChg = location.href !== beforeUrl; "
+            "    var added = collected.length - beforeCnt; "
+            "    diag.push('p'+pages+' '+btnInfo+' wait='+waited+'ms imgs'+beforeImgs+'->'+doc.querySelectorAll('img').length+' +'+added+' urlChg='+urlChg+(lab?(' lab='+lab[0]+'/'+lab[1]):'')+' tail='+location.href.slice(-45)); "
+            "    if(collected.length===beforeCnt && !urlChg){ "
+            "      noNewCount++; "
+            "      if(lab && lab[0] < lab[1] && noNewCount < 3){ continue; } "
+            "      reason='无新图且URL未变 x'+noNewCount; break; "
+            "    } "
+            "    noNewCount = 0; "
+            "  } "
+            "  if(pages>=999) reason='达999安全阀'; "
+            "  window._scrollDiag = 'mode=next_page pages='+pages+' reason='+reason+' 图片数='+collected.length+' || ' + diag.join(' | '); "
+            "} "
+            "try { window.name = ''; } catch(e) {} "
+            "return collected; "
+        )
+        return js, False
+
     def _add_iframe_frame(self, comic_name, chapter):
         # iframe 模式（use_frame=1）：用独立 QWebEngineView 窗口加载章节页
         # 独立窗口是顶级窗口 top===self，frame-bust 的 top!==self 判断不成立，不会跳转主页面
@@ -1012,42 +1631,52 @@ class Browser(QMainWindow):
         else:
             map_expr = ("im.dataset.src || im.dataset.original || im.dataset.url "
                         "|| im.dataset.lazySrc || im.dataset.originalSrc || im.src")
-        # 等待图片就绪：两种模式都滚动触发加载；开启滚到底加载须到底且数量稳定，未开启只需数量稳定
-        if self.scroll_to_load:
-            # 到底后数量连续 5 次不变才停
-            term_js = "if (atBottom) { if (cnt === lastCnt) { stable++; if (stable >= 5) break; } else { stable = 0; } } else { stable = 0; }"
-            mode_label = "scroll"
-            step_expr = "Math.max(vw.innerHeight - 50, 300)"
+        # 图片加载方式：1=滚动加载 2=滚到底部加载 3=下一页加载
+        load_mode = self.img_load_mode or 2
+        logging.info(f'[站点下载] 取图模式: img_load_mode={self.img_load_mode!r} load_mode={load_mode} use_frame={bool(self.use_frame)} img_dom={self.img_dom!r}')
+        need_extract = True
+        if load_mode == 3:
+            # 下一页加载：点击下一页按钮(配了选择器)或点图片右侧翻页，逐页提取去重（自带 return）
+            load_js, need_extract = self._build_next_page_js(map_expr, _json)
         else:
-            # 数量连续 5 次不变即停（不要求到底）
-            term_js = "if (cnt === lastCnt) { stable++; if (stable >= 5) break; } else { stable = 0; }"
-            mode_label = "stable"
-            step_expr = "500"
-        scroll_js = (
-            "if (doc && doc.defaultView) { "
-            "  var vw = doc.defaultView, lastCnt = -1, stable = 0, attempts = 0; "
-            "  while (attempts < 200) { "
-            "    attempts++; var cnt = doc.querySelectorAll('img').length; "
-            "    var h = doc.body ? doc.body.scrollHeight : 0; "
-            "    var atBottom = vw.innerHeight + vw.scrollY >= h - 5; "
-            "    " + term_js + " "
-            "    lastCnt = cnt; "
-            "    for (var w = 0; w < 6; w++) { try { document.documentElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })); } catch(e){} } "
-            "    vw.scrollBy(0, " + step_expr + "); "
-            "    await new Promise(function(r){ setTimeout(r, 400); }); "
-            "    var pendings = []; "
-            "    doc.querySelectorAll('img').forEach(function(im){ "
-            "      if (!im.complete && im.src) { "
-            "        pendings.push(new Promise(function(res){ im.onload = im.onerror = function(){ res(); }; setTimeout(res, 5000); })); "
-            "      } "
-            "    }); "
-            "    if (pendings.length) await Promise.all(pendings); "
-            "  } "
-            "  window._scrollDiag = 'mode=" + mode_label + " attempts=' + attempts + ' stable=' + stable + ' atBottom=' + (vw.innerHeight + vw.scrollY >= (doc.body ? doc.body.scrollHeight : 0) - 5) + ' 图片数=' + doc.querySelectorAll('img').length; "
-            "} "
-        )
-        # 取图：有 img_script 用之（变量 ifr 可用，需 return 数组），否则 DOM 提取
-        if self.img_script:
+            # 滚动触发懒加载；mode 2 须到底且数量稳定，mode 1 只需数量稳定
+            if load_mode == 2:
+                # 到底后数量连续 5 次不变才停
+                term_js = "if (atBottom) { if (cnt === lastCnt) { stable++; if (stable >= 5) break; } else { stable = 0; } } else { stable = 0; }"
+                mode_label = "scroll"
+                step_expr = "Math.max(vw.innerHeight - 50, 300)"
+            else:
+                # 数量连续 5 次不变即停（不要求到底）
+                term_js = "if (cnt === lastCnt) { stable++; if (stable >= 5) break; } else { stable = 0; }"
+                mode_label = "stable"
+                step_expr = "500"
+            load_js = (
+                "if (doc && doc.defaultView) { "
+                "  var vw = doc.defaultView, lastCnt = -1, stable = 0, attempts = 0; "
+                "  while (attempts < 200) { "
+                "    attempts++; var cnt = doc.querySelectorAll('img').length; "
+                "    var h = doc.body ? doc.body.scrollHeight : 0; "
+                "    var atBottom = vw.innerHeight + vw.scrollY >= h - 5; "
+                "    " + term_js + " "
+                "    lastCnt = cnt; "
+                "    for (var w = 0; w < 6; w++) { try { document.documentElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true })); } catch(e){} } "
+                "    vw.scrollBy(0, " + step_expr + "); "
+                "    await new Promise(function(r){ setTimeout(r, 400); }); "
+                "    var pendings = []; "
+                "    doc.querySelectorAll('img').forEach(function(im){ "
+                "      if (!im.complete && im.src) { "
+                "        pendings.push(new Promise(function(res){ im.onload = im.onerror = function(){ res(); }; setTimeout(res, 5000); })); "
+                "      } "
+                "    }); "
+                "    if (pendings.length) await Promise.all(pendings); "
+                "  } "
+                "  window._scrollDiag = 'mode=" + mode_label + " attempts=' + attempts + ' stable=' + stable + ' atBottom=' + (vw.innerHeight + vw.scrollY >= (doc.body ? doc.body.scrollHeight : 0) - 5) + ' 图片数=' + doc.querySelectorAll('img').length; "
+                "} "
+            )
+        # 取图：mode3 自带提取去重+return；mode1/2 用 img_script 或 DOM 提取
+        if not need_extract:
+            extract_js = ""
+        elif self.img_script:
             extract_js = self.img_script
         else:
             extract_js = (
@@ -1058,203 +1687,66 @@ class Browser(QMainWindow):
             )
         body = (
             "var doc = ifr.contentDocument; var sel = " + _json.dumps(img_dom) + "; "
-            + scroll_js + extract_js
+            + load_js + extract_js
         )
         meta = _json.dumps({'comic_name': comic_name, 'chapter_name': chapter['name'], 'chapter_link': chapter['link']})
-        # 入队，串行处理（一个取图窗口依次加载各章节，符合"依次"）
+        # 入队，由取图 worker 池并发处理（数量=下载线程数）
         self._fetch_queue.append({'link': chapter['link'], 'body': body, 'meta': meta,
                                   'comic_name': comic_name, 'chapter_name': chapter['name']})
-        if not self._fetch_busy:
-            self._process_fetch_queue()
+        self._pump_fetchers()
 
-    def _process_fetch_queue(self):
-        if not self._fetch_queue:
-            self._fetch_busy = False
-            self._close_fetcher()  # 所有章节取图完成（或失败），自动关闭取图窗口
-            return
-        self._fetch_busy = True
-        item = self._fetch_queue.pop(0)
-        if self._fetcher is None:
-            self._fetcher = QWebEngineView(self)
-            self._fetcher.setWindowTitle('章节取图（自动关闭，请勿关闭）')
-            self._fetcher.resize(900, 700)
-            # 去掉关闭按钮，禁止用户交互（仅标题栏+最小化）
-            self._fetcher.setWindowFlags(Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint | Qt.WindowMinimizeButtonHint)
-            # 关闭取图窗口时不应触发应用退出：顶层窗口默认 WA_QuitOnClose=True，
-            # 当主窗口最小化/非前台时，关闭取图窗口会触发 lastWindowClosed -> quit，
-            # 连带把主窗口一起关掉。显式关闭此属性，隔离取图窗口的退出影响。
-            self._fetcher.setAttribute(Qt.WA_QuitOnClose, False)
-            self._fetcher.loadFinished.connect(self._on_fetcher_loaded)
-            # 防抖定时器：章节页若有客户端重定向(loadFinished 多次触发)，等稳定后再提取
-            self._fetch_timer = QTimer(self)
-            self._fetch_timer.setSingleShot(True)
-            self._fetch_timer.timeout.connect(self._extract_from_fetcher)
-            try:
-                self._fetcher.page().setBackgroundColor(QColor('#1a1a1a'))
-            except Exception:
-                pass
-            self._fetcher.show()
-            # 蒙版：独立半透明置顶窗口，覆盖取图窗口阻止操作（不依赖页面JS，从打开到关闭全程在位）
-            self._fetcher_mask = QWidget(self._fetcher, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self._fetcher_mask.setAttribute(Qt.WA_QuitOnClose, False)
-            self._fetcher_mask.setStyleSheet('background: rgba(26,26,26,0.85);')
-            _ml = QVBoxLayout(self._fetcher_mask)
-            _ml.setContentsMargins(0, 0, 0, 0)
-            _lbl = QLabel('正在取图，请勿操作...')
-            _lbl.setStyleSheet('color:#ffffff;font-size:22px;font-family:sans-serif;')
-            _lbl.setAlignment(Qt.AlignCenter)
-            _ml.addWidget(_lbl)
-            self._fetcher_mask.show()
-            self._align_fetcher_mask()
-            # 跟随取图窗口移动/缩放
-            self._fetcher.installEventFilter(self)
-        self._fetcher._cur = item
-        logging.info(f'[站点下载] 取图窗口加载: {item["chapter_name"]} | {item["link"]}')
-        try:
-            self._fetcher.load(QUrl(item['link']))
-        except Exception:
-            logging.info('[站点下载] 取图窗口加载异常: ' + traceback.format_exc())
-            self._on_frame_images({'comic_name': item['comic_name'], 'chapter_name': item['chapter_name'],
-                                   'imgs': [], 'note': '取图窗口加载异常'})
-            self._process_fetch_queue()
+    def _pump_fetchers(self):
+        """派发队列中的章节到空闲取图 worker，最多并发 _max_fetchers 个；全部取图完成则关闭所有 worker。
+
+        worker 复用：章节取图完成后归还空闲池，下一章直接复用，避免反复起停渲染进程。
+        关闭时机：队列空 + 无在取 worker + checked_chapters 空（无更多章节将入队），此时下载仍异步进行。
+        """
+        while self._fetch_queue and len(self._busy_workers) < self._max_fetchers:
+            item = self._fetch_queue.pop(0)
+            if self._idle_workers:
+                worker = self._idle_workers.pop()
+            else:
+                worker = _FrameFetchWorker(self)
+                self._fetch_workers.append(worker)
+            self._busy_workers.append(worker)
+            worker.fetch(item)
+        # 队列空 + 无在取 worker + 无待取章节 => 取图全部完成，关闭所有 worker（下载仍异步进行）
+        if not self._fetch_queue and not self._busy_workers and not self.checked_chapters:
+            self._close_all_fetchers()
+
+    def _on_worker_extracted(self, worker, data):
+        """单个取图 worker 完成一章：启动该章下载，归还 worker 并派发下一章。"""
+        if worker in self._busy_workers:
+            self._busy_workers.remove(worker)
+        self._idle_workers.append(worker)
+        self._on_frame_images(data)
+        self._pump_fetchers()
+
+    def _close_all_fetchers(self):
+        """取图完成/失败时关闭并清理所有取图 worker"""
+        for worker in self._fetch_workers:
+            worker.close()
+        self._fetch_workers.clear()
+        self._idle_workers.clear()
+        self._busy_workers.clear()
+        logging.info('[站点下载] 取图窗口已全部关闭')
 
     def eventFilter(self, obj, event):
-        # 取图窗口移动/缩放时，蒙版窗口跟随对齐
-        if obj == self._fetcher and event.type() in (QEvent.Move, QEvent.Resize, QEvent.Show):
-            self._align_fetcher_mask()
+        # 取图窗口被拖动时，其他取图窗口跟随移动（保持重叠同一位置）
+        if event.type() == QEvent.Move and not self._syncing_fetchers:
+            for w in self._fetch_workers:
+                if w.view is obj:
+                    self._syncing_fetchers = True
+                    try:
+                        delta = event.pos() - event.oldPos()
+                        for w2 in self._fetch_workers:
+                            if w2.view is not None and w2.view is not obj:
+                                w2.view.move(w2.view.pos() + delta)
+                    except Exception:
+                        pass
+                    self._syncing_fetchers = False
+                    break
         return super().eventFilter(obj, event)
-
-    def _align_fetcher_mask(self):
-        """蒙版窗口对齐覆盖取图窗口的客户区"""
-        if self._fetcher is not None and getattr(self, '_fetcher_mask', None) is not None:
-            try:
-                self._fetcher_mask.setGeometry(self._fetcher.geometry())
-                self._fetcher_mask.raise_()
-                self._fetcher_mask.show()
-            except Exception:
-                pass
-
-    def _close_fetcher(self):
-        """取图完成/失败时关闭并清理取图窗口"""
-        if self._fetch_timer is not None:
-            try:
-                self._fetch_timer.stop()
-            except Exception:
-                pass
-        if self._fetcher is not None:
-            try:
-                self._fetcher.removeEventFilter(self)
-            except Exception:
-                pass
-            try:
-                self._fetcher.loadFinished.disconnect()
-            except Exception:
-                pass
-            try:
-                self._fetcher.close()
-                self._fetcher.deleteLater()
-            except Exception:
-                pass
-            self._fetcher = None
-            logging.info('[站点下载] 取图窗口已关闭')
-        # 关闭蒙版窗口
-        if getattr(self, '_fetcher_mask', None) is not None:
-            try:
-                self._fetcher_mask.close()
-                self._fetcher_mask.deleteLater()
-            except Exception:
-                pass
-            self._fetcher_mask = None
-
-    def _on_fetcher_loaded(self, ok):
-        view = self._fetcher
-        if view is None:
-            return
-        # 跳过初始蒙版页（about:blank 等非 http），只处理章节页
-        url = view.url().toString()
-        if not url.startswith('http'):
-            return
-        item = getattr(view, '_cur', None)
-        if not item:
-            return
-        if not ok:
-            logging.info(f'[站点下载] 取图窗口加载失败: {item["chapter_name"]}')
-            self._on_frame_images({'comic_name': item['comic_name'], 'chapter_name': item['chapter_name'],
-                                   'imgs': [], 'note': '取图窗口加载失败'})
-            self._process_fetch_queue()
-            return
-        # 蒙版由独立置顶窗口覆盖（_fetcher_mask），这里只做防抖提取
-        # 防抖：每次 loadFinished 都重启定时器，等页面稳定(无重定向)后再提取
-        self._fetch_timer.start(1500)
-
-    def _extract_from_fetcher(self):
-        view = self._fetcher
-        if view is None:
-            return
-        item = getattr(view, '_cur', None)
-        if not item:
-            return
-        body = item['body']
-        meta = item['meta']
-        logging.info(f'[站点下载] 开始提取图片: {item["chapter_name"]}')
-        # runJavaScript 不等待 async Promise，故 JS 把结果写到 window._fetchResult，Python 轮询读取
-        js_code = """
-        (async function(){
-            var META = """ + meta + """;
-            window._fetchResult = null;
-            var ifr = { contentWindow: window, contentDocument: document };
-            var note = '';
-            var imgs = [];
-            try {
-                var fn = (async function(ifr){
-                    """ + body + """
-                });
-                var val = await fn(ifr);
-                imgs = Array.isArray(val) ? val : (val ? [val] : []);
-            } catch(e) { note = 'JS异常:' + String(e); }
-            if (imgs.length === 0) {
-                try {
-                    note += ' | 标题=' + document.title + ' body长度=' + (document.body ? document.body.innerHTML.length : 0)
-                        + ' img数=' + document.querySelectorAll('img').length + ' URL=' + window.location.href;
-                    if (window.__NUXT__) note += ' | 含__NUXT__';
-                    if (window.__NEXT_DATA__) note += ' | 含__NEXT_DATA__';
-                } catch(e2) {}
-            }
-            note += ' | 滚动诊断: ' + (window._scrollDiag || '无');
-            window._fetchResult = JSON.stringify({ 'comic_name': META.comic_name, 'chapter_name': META.chapter_name, 'imgs': imgs, 'note': note, 'chapter_link': META.chapter_link });
-        })();
-        """
-        view.page().runJavaScript(js_code)
-        self._fetch_poll = 0
-        self._poll_fetch_result()
-
-    def _poll_fetch_result(self):
-        view = self._fetcher
-        if view is None:
-            return
-        self._fetch_poll += 1
-        view.page().runJavaScript('window._fetchResult', self._on_poll_fetch_result)
-
-    def _on_poll_fetch_result(self, result):
-        if result:
-            # 读到结果，清空全局，解析
-            self._fetcher.page().runJavaScript('window._fetchResult = null')
-            import json as _json
-            try:
-                data = _json.loads(result) if isinstance(result, str) else result
-            except Exception:
-                logging.info(f'[站点下载] 提取回调JSON解析失败: {str(result)[:200]}')
-                data = None
-            logging.info(f'[站点下载] 提取回调原始: {str(data)[:200]}')
-            self._on_frame_images(data)
-            self._process_fetch_queue()
-        elif self._fetch_poll < 300:  # 滚动等待JS上限约80s，统一给150s轮询
-            QTimer.singleShot(500, self._poll_fetch_result)
-        else:
-            logging.info('[站点下载] 提取超时(150s)未拿到结果')
-            self._on_frame_images(None)
-            self._process_fetch_queue()
-
 
     def _on_direct_fetched(self, comic_name, chapter_name, imgs, referer=''):
         self._start_chapter_download(comic_name, chapter_name, imgs, referer)
@@ -1272,17 +1764,69 @@ class Browser(QMainWindow):
     def _start_chapter_download(self, comic_name, chapter_name, imgs, referer=''):
         img_count = len(imgs or [])
         logging.info(f'[站点下载] 提取到 {img_count} 张图片 | 章节: {chapter_name}')
-        if img_count > 0:
-            self.comicWebsiteChapterImages = ComicWebsiteChapterImages(comic_name=comic_name,
-                                                                       chapter_name=chapter_name,
-                                                                       chapter_images=imgs,
-                                                                       referer=referer)
-            self.comicWebsiteChapterImages.success.connect(self.downloadComicStatus)
-            self.comicWebsiteChapterImages.start()
-        else:
+        if img_count == 0:
             # 未提取到图片：记日志并推进进度，不再无限重试避免卡死
             logging.info(f'[站点下载] 未提取到图片，跳过该章节: {chapter_name}')
             self.downloadComicStatus(comic_name)
+            return
+        if self.cross_origin == 1:
+            # 跨域：每章一个 _CrossDownloadWorker（自带 cookie 会话 + httpx），多章并发下图不串话
+            bad = ('logo', 'data:image', 'blank', 'placeholder', 'loading.gif', 'load.gif', 'favicon')
+            urls = [deal_url(u) for u in imgs if u and not any(b in u.lower() for b in bad)]
+            if not urls:
+                # 0 图片章节：不建会话、不建目录，直接推进（与 0 图片兜底一致，避免 epub 合并空目录崩溃）
+                self.downloadComicStatus(comic_name)
+                return
+            worker = _CrossDownloadWorker(self, comic_name, chapter_name, urls,
+                                           referer or self.url, self.restore_algorithm)
+            worker.progress.connect(self._on_cross_progress)
+            worker.success.connect(lambda cn=comic_name, w=worker: self._on_cross_worker_done(w, cn))
+            self._cross_workers.append(worker)
+            worker.start()
+        else:
+            # 同域：httpx 并发下载；引用集持有防并发覆盖丢引用 -> GC segfault
+            cwci = ComicWebsiteChapterImages(comic_name=comic_name,
+                                             chapter_name=chapter_name,
+                                             chapter_images=imgs,
+                                             referer=referer,
+                                             restore_algorithm=self.restore_algorithm)
+            cwci.success.connect(self.downloadComicStatus)
+            cwci.finished.connect(lambda t=cwci: self._chapter_image_threads.discard(t))
+            self._chapter_image_threads.add(cwci)
+            cwci.start()
+
+    def _on_cross_progress(self, done, total):
+        # 跨域下图 worker 图片粒度进度：触发聚合重算（worker 已自存 done/total）
+        self._emit_progress()
+
+    def _on_cross_worker_done(self, worker, comic_name):
+        # 跨域单章下图完成：移出在途列表（其 frac 不再计入聚合）并推进章节进度
+        if worker in self._cross_workers:
+            self._cross_workers.remove(worker)
+        worker.cleanup()
+        self.downloadComicStatus(comic_name)
+
+    def _emit_progress(self):
+        """实时进度（隐藏/下载管理模式）：(已完成章节 + Σ 各在途 worker 图片进度) / 总章节数 * 100，封顶99%。
+        epub 合并完成才 100%。每张图下载完实时回传，进度单调递增不回退（总章节数下载前已知，
+        避免按图片总数逐章累计会回退的问题）。worker 完成后移出 _cross_workers，其 frac(=1.0)
+        由 completed(+1) 顶替，边界等价、不回退。"""
+        if not self.hidden or self.task_id is None:
+            return
+        total = getattr(self, '_total_chapters', 0) or 1
+        completed = getattr(self, '_completed_chapters', 0)
+        # 聚合所有在途跨域 worker 的图片进度（每章 done/total 求和）
+        frac = 0.0
+        for w in self._cross_workers:
+            if w.total:
+                frac += w.done / w.total
+        progress = min(int((completed + frac) / total * 100), 99)
+        try:
+            with SQLiteDatabase() as db:
+                db.update_data('website_chapter_download', {'process': progress}, {'id': self.task_id})
+        except Exception:
+            logging.info('更新下载进度失败: ' + traceback.format_exc())
+        self.progress.emit(self.task_id, progress)
 
     def downloadComicStatus(self, comic_name):
         logging.info(f'[站点下载] 章节下载完成: {comic_name}')
@@ -1303,8 +1847,17 @@ class Browser(QMainWindow):
         record = sqlite_util.query_first_data('website_download_record', {'comic_name': comic_name})
 
         sqlite_util.close()
-        progress = int(record.downloaded_num / record.chapter_num * 100) if record.chapter_num else 0
-        logging.info(f'[站点下载] 进度: {record.downloaded_num}/{record.chapter_num} ({progress}%)')
+        if self.hidden:
+            # 下载管理（隐藏/跨域）：章节细分进度。该章 worker 已在 _on_cross_worker_done 移出在途列表，
+            # 其 frac 不再计入聚合；此处计入已完成并刷新进度（completed/total，章节边界）。
+            # 图片粒度实时进度由 _on_cross_progress（httpx 每张下完）的 _emit_progress 负责。
+            self._completed_chapters = (getattr(self, '_completed_chapters', 0)) + 1
+            self._emit_progress()
+            logging.info(f'[站点下载] 章节完成: {self._completed_chapters}/{getattr(self, "_total_chapters", 0)}')
+        else:
+            # 同域（非隐藏）：保持章节维度进度（stateTooltip），不动同域路径
+            progress = int(record.downloaded_num / record.chapter_num * 100) if record.chapter_num else 0
+            logging.info(f'[站点下载] 进度: {record.downloaded_num}/{record.chapter_num} ({progress}%)')
         if record.chapter_num == record.downloaded_num:
             logging.info(f'[站点下载] 全部章节下载完成，开始合并epub: {comic_name}')
             # 下载完成合并epub
@@ -1312,6 +1865,21 @@ class Browser(QMainWindow):
             isMergeChapte = cfg.get(cfg.isMergeChapte)
             download_folder = cfg.get(cfg.downloadFolder)
             path = f"{download_folder}/{comic_name}"
+            # 漫画目录不存在（所有章节均未提取到图片，无任何下载产物）：跳过合并、标记失败
+            # 否则 get_directories 的 os.listdir 与 EpubThread 都会在缺失目录上 FileNotFoundError 崩溃
+            if not os.path.isdir(path):
+                logging.info(f'[站点下载] 漫画目录不存在，无下载产物，标记失败: {path}')
+                if self.hidden:
+                    # 下载管理：发 failed 信号，_onFailed 置 status=-1 + 刷新表格 + 失败提示
+                    if self.task_id is not None:
+                        self.failed.emit(self.task_id)
+                else:
+                    # 同域非隐藏：还原 UI + 失败提示（仅兜底崩溃，不动同域下载流程）
+                    self.stateTooltip.hide()
+                    self.toggle_mask(1)
+                    self.chapter_button.setDisabled(False)
+                    show_tip(InfoBarIcon.ERROR, '温馨提示', '未提取到任何图片，下载失败', self)
+                return
             if isMergeChapte:
                 mergeChapterNum = cfg.get(cfg.mergeChapterNum)
 
@@ -1330,12 +1898,22 @@ class Browser(QMainWindow):
             self.epubThread.success.connect(lambda p=path: self.download_finish(p))
             self.epubThread.start()
         else:
-            self.stateTooltip.setContent(
-                '已完成' + str(progress) + '%,请耐心等待~~')
+            if not self.hidden:
+                self.stateTooltip.setContent(
+                    '已完成' + str(progress) + '%,请耐心等待~~')
             self.launch_iframes(comic_name)
 
     def download_finish(self, path):
         logging.info('[站点下载] epub合并完成')
+        # 下载管理（隐藏模式）：更新任务状态完成 + 发信号，不弹对话框
+        if self.hidden:
+            if self.task_id is not None:
+                with SQLiteDatabase() as db:
+                    db.update_data('website_chapter_download',
+                                   {'status': 2, 'process': 100, 'finish_time': get_current_time()},
+                                   {'id': self.task_id})
+            self.finished.emit(self.task_id, path)
+            return
         self.stateTooltip.hide()
         self.toggle_mask(1)
         self.chapter_button.setDisabled(False)
@@ -1416,16 +1994,29 @@ class CustomFlyoutView(FlyoutViewBase):
     def downloadComic(self, result):
         # 获取选中复选框的状态
         checked_items = [checkbox.text() for checkbox in self.checkboxes if checkbox.isChecked()]
+        if not checked_items:
+            return
+        checked_chapters = [obj for obj in result['chapters'] if obj['name'] in checked_items]
+        # 跨域站点：保存到下载管理（不立即下载，到下载管理窗口触发浏览器下载）
+        if getattr(self.parent, 'cross_origin', 0) == 1:
+            first, last = checked_chapters[0]['name'], checked_chapters[-1]['name']
+            chapter_range = first if first == last else f'{first} ~ {last}'
+            site_config = self.parent.get_site_config()
+            with SQLiteDatabase() as db:
+                db.insert_data('website_chapter_download', {
+                    'comic_name': result['comic_name'], 'site_name': '',
+                    'chapter_count': len(checked_chapters), 'chapter_range': chapter_range,
+                    'chapters_json': json.dumps(checked_chapters, ensure_ascii=False),
+                    'site_config_json': json.dumps(site_config, ensure_ascii=False),
+                    'status': 0, 'process': 0, 'start_time': get_current_time()})
+            show_tip(InfoBarIcon.SUCCESS, '温馨提示', '已加入下载管理，可在站点页「下载管理」中开始下载',
+                     self.parent.window(), InfoBarPosition.TOP)
+            return
+        # 同域站点：现状立即下载
+        self.parent.toggle_mask(0)
+        self.parent.chapter_button.setDisabled(True)
+        self.download_button.setDisabled(True)
 
-        if len(checked_items) > 0:
-            self.parent.toggle_mask(0)
-            self.parent.chapter_button.setDisabled(True)
-            self.download_button.setDisabled(True)
+        self.parent.stateTooltip.show()
 
-            self.parent.stateTooltip.show()
-
-            checked_chapters = []
-            if checked_items:
-                checked_chapters = [obj for obj in result['chapters'] if obj['name'] in checked_items]
-
-            self.parent.downloadComic(result, checked_chapters)
+        self.parent.downloadComic(result, checked_chapters)

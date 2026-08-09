@@ -3,12 +3,16 @@
 # 用法（macOS 或 GitHub Actions macos runner）：pyinstaller cmbok_mac.spec
 # 依赖：resource/images/logo.icns（由 build-mac.yml 用 iconutil 从 logo.png 生成）
 
+import os
+from PyInstaller.utils.hooks import collect_submodules
+
+
 a = Analysis(
     ['cmbok.py'],
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('zeroconf'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -36,7 +40,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['resource/images/logo.icns'],
+    icon=[os.path.join(SPECPATH, 'resource', 'images', 'logo.icns')],
 )
 coll = COLLECT(
     exe,
@@ -50,6 +54,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='cmbok.app',
-    icon='resource/images/logo.icns',
+    icon=os.path.join(SPECPATH, 'resource', 'images', 'logo.icns'),
     bundle_identifier='com.cmbok.app',
 )

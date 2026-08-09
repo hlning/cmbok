@@ -9,6 +9,7 @@ import time
 import traceback
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import aiohttp
 import httpx
@@ -25,7 +26,8 @@ try:
 except ImportError:
     BUILTIN_ACCOUNTS = []
 from utils.base_utils import get_current_time, get_file_extension, deal_url
-from utils.client_util import create_api_client
+from utils.image_restore import restore_image
+from utils.client_util import create_api_client, get_system_proxy
 from utils.utils_book_type_convert import img_to_pdf, convert_epub_to_mobi
 from utils.utils_files_and_folders import del_file, del_folder, del_folder_images
 from view.download_interface import book_process_signals, download_signals, comic_process_signals
@@ -39,6 +41,30 @@ download_comic_lock = QMutex()
 _builtin_token_cache = {}
 _builtin_token_lock = QMutex()
 _BUILTIN_TOKEN_TTL = 600  # 10 分钟
+
+# 自登账号最近一次 profile 的下载量缓存（userid -> (downloads_today, downloads_limit)）
+# 自登头像据此显示 z-library 实际下载量（含外部消耗），区别于软件本地计数 logged_count
+_profile_downloads = {}
+_profile_downloads_lock = QMutex()
+
+
+def _update_profile_downloads(userid, today, limit):
+    """缓存自登账号 profile 返回的最新下载量（搜索/下载/登录 profile 后调，主线程头像读取）"""
+    if not userid:
+        return
+    _profile_downloads_lock.lock()
+    _profile_downloads[str(userid)] = (today, limit)
+    _profile_downloads_lock.unlock()
+
+
+def get_profile_downloads(userid):
+    """读自登账号最近 profile 的下载量 (today, limit)；无缓存返回 None。供头像显示用。"""
+    if not userid:
+        return None
+    _profile_downloads_lock.lock()
+    v = _profile_downloads.get(str(userid))
+    _profile_downloads_lock.unlock()
+    return v
 
 
 def _get_builtin_zlibrary(email, password):
@@ -116,13 +142,22 @@ class BookSearch(QThread):
                     else:
                         self.success.emit('no_login', None)
                     return
+                # 缓存 profile 最新下载量，供头像显示实际值（含外部消耗）
+                _update_profile_downloads(remix_userid, Z.getDownloadsToday(), Z.getDownloadsLimit())
                 results = self._do_search(Z)
                 if results and results.get('rate_limited'):
                     self.success.emit('rate_limited', None)
                 elif results and results.get('unavailable'):
                     self.success.emit('unavailable', None)
                 elif results is None or not results.get('success'):
-                    self.success.emit('fail', None)
+                    # 复校 token：区分 token 失效（需重新登录）vs 真失败（网络异常）
+                    token_state = Z.verifyToken()
+                    if token_state is None:
+                        self.success.emit('unavailable', None)
+                    elif token_state is False:
+                        self.success.emit('no_login', None)
+                    else:
+                        self.success.emit('fail', None)
                 else:
                     self._emit_success(results)
         except Exception as e:
@@ -144,7 +179,7 @@ class BookSearch(QThread):
         )
 
     def _emit_success(self, results):
-        # 精简字段，保持与原后台返回结构一致
+        # 精简字段，保持与原后台返回结构一致；保留详情页所需的简介/页数/出版社/ISBN/兴趣评分
         new_books = []
         for book in results.get('books', []):
             new_books.append({
@@ -156,7 +191,12 @@ class BookSearch(QThread):
                 'year': book.get('year'),
                 'language': book.get('language'),
                 'filesizeString': book.get('filesizeString'),
-                'extension': book.get('extension')
+                'extension': book.get('extension'),
+                'description': book.get('description'),
+                'pages': book.get('pages'),
+                'publisher': book.get('publisher'),
+                'identifier': book.get('identifier'),
+                'interestScore': book.get('interestScore')
             })
         results['books'] = new_books
         self.success.emit('success', results)
@@ -177,6 +217,8 @@ class BookSearch(QThread):
             if results and results.get('rate_limited'):
                 # 被限流，停止轮询其他账号，避免加剧 429
                 return results
+            # 失败：继续试下一个账号；token 若失效，下次 _get_builtin_zlibrary 缓存命中 profile
+            # 校验失败会自动重新 login（无需在此清缓存，避免 token 有效时浪费 login 触发 429）
         return None
 
 
@@ -349,35 +391,41 @@ class BookDownload(QThread):
         self.finished.connect(lambda: book_download_threads.discard(self))
 
     def _stream_download(self, ddl, headers, history_id, output_file):
-        """流式下载文件并实时更新进度，返回 'success' / 'error'"""
-        response = requests.get(ddl, headers=headers, stream=True, timeout=60)
-        response.raise_for_status()
-        total = int(response.headers.get('Content-Length', 0))
-        downloaded = 0
-        last_process = 0
-        with open(output_file, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total > 0:
-                        self.process = int(downloaded * 100 / total)
-                        if self.process >= 100:
-                            self.process = 99
-                        # 每变化 >=2% 才写库+发信号，减少开销
-                        if self.process - last_process >= 2 or self.process == 99:
-                            sqlite_util = SQLiteDatabase()
-                            try:
-                                sqlite_util.update_data('cmbok_download_history',
-                                                        {'process': self.process},
-                                                        {'id': history_id})
-                                book_process_signals.success.emit(history_id, self.process)
-                            except Exception:
-                                sqlite_util.rollback()
-                            finally:
-                                sqlite_util.close()
-                            last_process = self.process
-        return 'success'
+        """流式下载文件并实时更新进度，返回 'success' / 'error'。
+        异常（HTTPError/网络错误）捕获返回 'error' 不向上抛，确保调用方能释放名额/试下一个账号。"""
+        try:
+            response = requests.get(ddl, headers=headers, stream=True, timeout=60)
+            response.raise_for_status()
+            total = int(response.headers.get('Content-Length', 0))
+            downloaded = 0
+            last_process = 0
+            with open(output_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total > 0:
+                            self.process = int(downloaded * 100 / total)
+                            if self.process >= 100:
+                                self.process = 99
+                            # 每变化 >=2% 才写库+发信号，减少开销
+                            if self.process - last_process >= 2 or self.process == 99:
+                                sqlite_util = SQLiteDatabase()
+                                try:
+                                    sqlite_util.update_data('cmbok_download_history',
+                                                            {'process': self.process},
+                                                            {'id': history_id})
+                                    book_process_signals.success.emit(history_id, self.process)
+                                except Exception:
+                                    sqlite_util.rollback()
+                                finally:
+                                    sqlite_util.close()
+                                last_process = self.process
+            return 'success'
+        except Exception:
+            logging.info(traceback.format_exc())
+            logging.info('流式下载异常')
+            return 'error'
 
     def _download_file_stream(self, history_id):
         """自有账号模式：用登录 token 获取下载链接并流式下载，每个账号每日最多10本（按 userid 计数，预留名额防竞态）"""
@@ -390,11 +438,24 @@ class BookDownload(QThread):
         Z = Zlibrary(remix_userid=remix_userid, remix_userkey=remix_userkey)
         if not Z.isLoggedIn():
             _release_logged_download(remix_userid)
-            return 'no_account'
+            # token 失效提示重新登录；地址不可用（404）提示暂不可用
+            return 'unavailable' if Z.isUnavailable() else 'no_login'
+
+        # 缓存 profile 最新下载量（下载前快照），供头像显示实际值
+        _update_profile_downloads(remix_userid, Z.getDownloadsToday(), Z.getDownloadsLimit())
 
         allow, filename, ddl, headers = Z.getDownloadLink(self.book_id, self.book_hash)
         if not allow or not ddl:
             _release_logged_download(remix_userid)
+            # 账号今日额度已用完：z-library 返回 allowDownload=False 且提示 daily limit
+            if Z.isQuotaExceeded():
+                return 'quota_exceeded'
+            # 复校 token：区分 token 失效 vs 真失败/书不可下载
+            token_state = Z.verifyToken()
+            if token_state is None:
+                return 'unavailable'
+            if token_state is False:
+                return 'no_login'
             return 'error'
 
         invalid_chars = r'[<>:"/\\|?*]'
@@ -402,7 +463,10 @@ class BookDownload(QThread):
         output_file = os.path.join(cfg.get(cfg.downloadFolder),
                                    f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
         status = self._stream_download(ddl, headers, history_id, output_file)
-        if status != 'success':
+        if status == 'success':
+            # 下载成功：更新 profile 下载量缓存（profile 是下载前快照，+1 = 下载后实际）
+            _update_profile_downloads(remix_userid, (Z.getDownloadsToday() or 0) + 1, Z.getDownloadsLimit())
+        else:
             _release_logged_download(remix_userid)
         return status
 
@@ -423,19 +487,30 @@ class BookDownload(QThread):
                                    f'{sanitized_filename}_{self.book_id}.{self.book_extension}')
 
         # 按计数轮转起点，均匀分散到各账号
+        any_quota_exceeded = False
         for i in range(len(BUILTIN_ACCOUNTS)):
             account = BUILTIN_ACCOUNTS[(start + i) % len(BUILTIN_ACCOUNTS)]
             Z = _get_builtin_zlibrary(account['email'], account['password'])
-            if not Z or Z.isUnavailable():
+            if not Z:
                 continue
+            # 地址不可用（全候选 404）：所有账号都一样，立即返回（与搜索一致），无需遍历
+            if Z.isUnavailable():
+                _release_builtin_download()
+                return 'unavailable'
             allow, filename, ddl, headers = Z.getDownloadLink(self.book_id, self.book_hash)
             if not allow or not ddl:
+                # 记录额度用完：全部账号失败时据此区分提示
+                if Z.isQuotaExceeded():
+                    any_quota_exceeded = True
+                # token 若失效，下次 _get_builtin_zlibrary 缓存命中 profile 校验失败会自动重登
                 continue
             status = self._stream_download(ddl, headers, history_id, output_file)
             if status == 'success':
                 return 'success'  # 成功，保留预留名额
         # 所有账号都失败，释放预留名额
         _release_builtin_download()
+        if any_quota_exceeded:
+            return 'quota_exceeded'
         return 'no_account'
 
     def download_success(self, history_id):
@@ -468,6 +543,24 @@ class BookDownload(QThread):
                                {'status': -5, 'finish_time': get_current_time()},
                                {'id': history_id})
                 download_signals.success.emit('no_num', self.book_name, self.book_author, 2)
+            elif download_status == 'quota_exceeded':
+                db.update_data('cmbok_download_history',
+                               {'status': -6, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('quota_exceeded', self.book_name, self.book_author, 2)
+            elif download_status == 'no_login':
+                # token 失效：清空持久化的登录态，提示用户重新登录
+                cfg.set(cfg.zlibrary_remix_userid, '')
+                cfg.set(cfg.zlibrary_remix_userkey, '')
+                db.update_data('cmbok_download_history',
+                               {'status': -7, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('no_login', self.book_name, self.book_author, 2)
+            elif download_status == 'unavailable':
+                db.update_data('cmbok_download_history',
+                               {'status': -8, 'finish_time': get_current_time()},
+                               {'id': history_id})
+                download_signals.success.emit('unavailable', self.book_name, self.book_author, 2)
 
     def run(self):
         global book_active_downloads
@@ -577,7 +670,9 @@ class ComicGroups(QThread):
             response = api_client("GET", url)
             if response.status_code == 200:
                 data = json.loads(response.text)
-                results = {'comic_path_word': self.path_word, 'groups': data['results']['groups']}
+                results = {'comic_path_word': self.path_word,
+                           'groups': data['results']['groups'],
+                           'comic': data['results'].get('comic', {})}
                 self.success.emit('success', results)
             else:
                 self.success.emit('fail', None)
@@ -1072,13 +1167,33 @@ class WebsiteChapterFetchThread(QThread):
 
 class ComicWebsiteChapterImages(QThread):
     success = pyqtSignal(object)
+    # 图片粒度实时进度（已下完数, 总数）；同域路径不连接此信号，发射即无操作
+    progress = pyqtSignal(int, int)
 
-    def __init__(self, comic_name, chapter_name, chapter_images, referer=''):
+    def __init__(self, comic_name, chapter_name, chapter_images, referer='', restore_algorithm='', cookies=None, proxy=None, cross_origin=False):
         super(ComicWebsiteChapterImages, self).__init__()
         self.comic_name = comic_name
         self.chapter_images = chapter_images
         self.chapter_name = chapter_name
         self.referer = referer or ''
+        self.restore_algorithm = restore_algorithm or ''
+        # 跨域站点：浏览器加载章节页建立的会话 cookie，拼成 Cookie 头随请求带上。
+        # 同域站点不传 cookies，cookie_header 为空，请求行为与改动前完全一致。
+        self.cookies = cookies or {}
+        self.cookie_header = '; '.join(f'{k}={v}' for k, v in self.cookies.items() if k)
+        # 代理（显式 http://host:port，trust_env=False）：跨域由调用方传入；同域不传则在此读一次
+        # 系统代理缓存。不用 trust_env=True：Windows 下若环境变量 HTTPS_PROXY=https://host:port，
+        # httpx 会把代理当 HTTPS 代理对 127.0.0.1 做 start_tls 握手 5s 超时（日志 start_tls.failed
+        # ConnectTimeout），每张图卡满重试拖慢下载。统一显式 http:// proxy 既避该 bug 又与浏览器
+        # 系统代理同源（V2RayN 写注册表 ProxyServer）。
+        self.proxy = proxy or None
+        self._sys_proxy = self.proxy or get_system_proxy()
+        # 跨域防盗链开关：True 时轮换 Referer + 占位图检测（见 async_download_image）；
+        # 同域 False 走单 Referer + 接受任意 200 的原逻辑，与改动前一致。
+        self.cross_origin = cross_origin
+        self._direct_unreachable = False  # 直连探测失败标记（首图直连不可达后置 True，后续图跳过直连直接走代理）
+        self._direct_client = None      # 共享直连 httpx client（download_chapter_images 创建复用，避免每图 TLS）
+        self._proxy_client = None       # 共享代理 httpx client（有系统代理时创建）
 
     def run(self):
         try:
@@ -1089,7 +1204,7 @@ class ComicWebsiteChapterImages(QThread):
             logging.info(traceback.format_exc())
             logging.info('下载所有图片失败')
 
-    # 下载单个图片的异步函数（失败重试 3 次）
+    # 下载单个图片的异步函数（失败重试 10 次）
     async def async_download_image(self, url, save_path, filename):
         filename = filename.replace('/', '')
         target = os.path.join(save_path, filename)
@@ -1109,25 +1224,62 @@ class ComicWebsiteChapterImages(QThread):
             "sec-ch-ua-platform": '"Windows"',
             "Referer": self.referer or 'https://www.google.com/',
         }
+        # 跨域站点：附上浏览器会话 cookie（防盗链/会话校验）；同域为空不加
+        if self.cookie_header:
+            headers["Cookie"] = self.cookie_header
+        # 跨域防盗链：部分图片服务器(如 g-mh.online)对站点 Referer 会 302 跳占位图(/link/link.webp)
+        # 或直接挂起。轮换 Referer 策略 + 占位图检测(最终 URL 文件名 != 请求文件名 = 占位图)兜底。
+        # 同域(cross_origin=False)不进此分支，单 Referer + 接受任意 200，行为与改动前一致。
+        if self.cross_origin:
+            req_file = urlparse(url).path.rsplit('/', 1)[-1]
+            img_origin = f"{urlparse(url).scheme}://{urlparse(url).hostname}/"
+            # attempt 0 章节页 Referer(原行为，正常站直接命中) -> 图片自身域(反站点 Referer 的，如 g-mh.online) -> 空
+            referer_strategies = [self.referer or 'https://www.google.com/', img_origin, '']
         last_err = ''
-        for attempt in range(3):
+        # 复用 download_chapter_images 创建的共享 client（直连 + 代理），避免每图重建 TCP/TLS 握手
+        direct = self._direct_client
+        proxy = self._proxy_client
+        for attempt in range(10):
+            # 跨域：轮换 Referer 策略(同域不动，用 headers 初始的章节页 Referer)
+            if self.cross_origin:
+                headers['Referer'] = referer_strategies[attempt % len(referer_strategies)]
             try:
-                # 直连优先(trust_env=False)，失败后走系统代理(trust_env=True)重试：
-                # 兼顾直连可达站(如 mwappimgs.cc)与需代理站(如 s1.bzcdn.net)。
-                # connect 阶段 5s 超时，让直连不通的站快速失败走代理，避免每张图等满 30s
-                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True, trust_env=(attempt >= 1)) as client:
-                    response = await client.get(url, headers=headers)
-                    if response.status_code == 200:
-                        with open(target, 'wb') as file:
-                            file.write(response.content)
-                        return
-                    last_err = f'status={response.status_code}'
+                # attempt 0 直连快速命中直连可达站(如 mwappimgs.cc)；首图直连不可达后置
+                # _direct_unreachable，后续图跳过直连直接走代理，省 N×5s 直连超时
+                if attempt == 0 and not self._direct_unreachable:
+                    client = direct
+                else:
+                    client = proxy or direct
+                response = await client.get(url, headers=headers)
+                if response.status_code == 200:
+                    # 跨域占位图检测：follow_redirects 后最终 URL 文件名 != 请求文件名 = 被防盗链重定向到占位图，拒绝换策略重试
+                    if self.cross_origin and req_file:
+                        final_file = urlparse(str(response.url)).path.rsplit('/', 1)[-1]
+                        if final_file and final_file != req_file:
+                            last_err = f'占位图(防盗链): {req_file}->{final_file}'
+                            await asyncio.sleep(1 + attempt)
+                            continue
+                    with open(target, 'wb') as file:
+                        file.write(response.content)
+                    # 按站点配置的恢复算法就地还原（覆盖原文件），失败保留原图不中断
+                    if self.restore_algorithm:
+                        # restore_image 是 PIL 同步 CPU 操作，放线程池避免阻塞 asyncio 事件循环（PIL 释放 GIL 可并行）
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, restore_image, target, self.restore_algorithm)
+                    return
+                last_err = f'status={response.status_code}'
             except Exception as e:
                 # 带异常类型，避免 ConnectTimeout 等异常 str() 为空时 last_err 误导排查
                 last_err = f'{type(e).__name__}: {e}'
+                # 直连类失败(连接超时/拒绝)且首图：标记直连不可达，后续图直接走代理，省 N×5s 直连探测
+                if attempt == 0 and proxy and not self._direct_unreachable and isinstance(
+                        e, (httpx.ConnectTimeout, httpx.ConnectError,
+                            httpx.ReadTimeout, httpx.RemoteProtocolError)):
+                    self._direct_unreachable = True
+                    logging.info(f'[站点下载] 直连不可达，后续图片改走代理: {url} | {last_err}')
             # 失败后退避重试
             await asyncio.sleep(1 + attempt)
-        logging.info(f'图片下载失败(重试3次): {url} | {last_err}')
+        logging.info(f'图片下载失败(重试10次): {url} | {last_err}')
 
     async def download_chapter_images(self, image_urls, comic_name, chapter_name):
         logging.info(f'{comic_name}{chapter_name}图片开始下载')
@@ -1144,7 +1296,35 @@ class ComicWebsiteChapterImages(QThread):
             for
             index, url in
             enumerate(image_urls)]
-        await asyncio.gather(*tasks)
+        # 图片粒度进度：每张下完(含已存在跳过)即回传 (done, total)，供下载管理窗口实时刷新进度环
+        total = len(tasks)
+        done = 0
+
+        async def _run_with_progress(t):
+            nonlocal done
+            await t
+            done += 1
+            self.progress.emit(done, total)
+
+        # 复用 httpx client：直连 + 代理两套共享 AsyncClient，避免每张图重新 TCP/TLS 握手（原每图
+        # 新建 client 导致 100 图 = 100 次 TLS，约 10-30s 纯握手开销）。timeout/follow_redirects/trust_env
+        # 在 client 创建时设定，所有请求复用连接池 keep-alive；proxy 仅在有系统代理时建。
+        self._direct_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True, trust_env=False)
+        self._proxy_client = None
+        if self._sys_proxy:
+            self._proxy_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True,
+                trust_env=False, proxy=self._sys_proxy)
+        try:
+            await asyncio.gather(*[_run_with_progress(t) for t in tasks])
+        finally:
+            # 无论成功失败都关闭 client，释放连接池
+            await self._direct_client.aclose()
+            self._direct_client = None
+            if self._proxy_client:
+                await self._proxy_client.aclose()
+                self._proxy_client = None
         logging.info(f'{comic_name}{chapter_name}图片下载完成')
         self.success.emit(comic_name)
 

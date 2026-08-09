@@ -14,7 +14,7 @@ from qfluentwidgets import (SettingCardGroup, SwitchSettingCard, OptionsSettingC
                             setTheme, setThemeColor, RangeSettingCard, SubtitleLabel, CaptionLabel,
                             LineEdit, MessageBoxBase)
 
-from common.config import cfg, GITHUBURL, QQ_URL, GITHUB_RELEASE_API
+from common.config import cfg, GITHUBURL, QQ_URL, GITHUB_RELEASE_API, SITE_URL
 from common.signal_bus import signalBus
 from common.style_sheet import StyleSheet
 from custom.my_fluent_icon import MyFluentIcon
@@ -297,6 +297,15 @@ class SettingInterface(ScrollArea):
             self.aboutGroup
         )
 
+        self.siteCard = HyperlinkCard(
+            SITE_URL,
+            '去小站',
+            FIF.GLOBE,
+            '甜甜的小站',
+            '这是我的个人主页，后续有软件或版本发布都会更新到这里',
+            self.aboutGroup
+        )
+
         self.aboutCard = PrimaryPushSettingCard(
             '检查更新',
             FIF.INFO,
@@ -395,6 +404,7 @@ class SettingInterface(ScrollArea):
         self.aboutGroup.addSettingCard(self.githubCard)
         self.aboutGroup.addSettingCard(self.donateCard)
         self.aboutGroup.addSettingCard(self.qqCard)
+        self.aboutGroup.addSettingCard(self.siteCard)
         self.aboutGroup.addSettingCard(self.aboutCard)
 
         # add setting card group to layout

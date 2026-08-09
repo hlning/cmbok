@@ -2,6 +2,8 @@ import logging
 import multiprocessing
 import os
 import shutil
+import subprocess
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -15,6 +17,8 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
 from common.config import cfg
+from utils.trim_margin import trim_epub_margins, strip_calibre_cover
+from utils.utils_book_type_convert import convert_epub_to_mobi
 from utils.utils_files_and_folders import del_file
 
 
@@ -285,3 +289,90 @@ class ConvertTool(QThread):
         c.save()  # 保存 PDF 文件
 
         return new_file_path
+
+
+# 去白边工具：裁掉漫画 epub/mobi 内图片内容边界外的空白（纯裁剪不放大）
+class TrimMarginTool(QThread):
+    process = pyqtSignal()
+    finished = pyqtSignal(object, object)
+    progress = pyqtSignal(int, int, str)  # current, total, 文件名
+
+    def __init__(self, files, threshold, padding, zoom=100, dev_w=0, dev_h=0):
+        super(TrimMarginTool, self).__init__()
+        self.files = files
+        self.threshold = threshold
+        self.padding = padding
+        self.zoom = zoom
+        self.dev_w = dev_w
+        self.dev_h = dev_h
+
+    def run(self):
+        self.process.emit()
+        time.sleep(0.5)
+        error_files = []
+        for file_path in self.files:
+            try:
+                ext = os.path.splitext(file_path)[1].lower()
+                stem = Path(file_path).stem
+                if ext == '.epub':
+                    out = os.path.join(os.path.dirname(file_path), f'{stem}_去白边.epub')
+                    ok, _ = trim_epub_margins(file_path, out, self.threshold, self.padding,
+                                              self.zoom, self.dev_w, self.dev_h,
+                                              progress_cb=self._progress)
+                    if not ok:
+                        error_files.append(file_path)
+                elif ext == '.mobi':
+                    out = os.path.join(os.path.dirname(file_path), f'{stem}_去白边.mobi')
+                    ok, reason = self._trim_mobi(file_path, out)
+                    if not ok:
+                        error_files.append(f'{file_path}（{reason}）' if reason else file_path)
+                else:
+                    error_files.append(file_path)
+            except Exception:
+                error_files.append(file_path)
+                logging.info(f'[去白边] 失败 {file_path}: {traceback.format_exc()}')
+        self.finished.emit('finished', error_files)
+
+    def _progress(self, current, total, name):
+        self.progress.emit(current, total, name)
+
+    def _trim_mobi(self, mobi_path, out_path):
+        """mobi 经 calibre 双向转换：mobi->epub->裁白边->epub->mobi。
+
+        返回 (success, reason)：success=False 时 reason 为失败原因（可空）。
+        """
+        calibrePath = cfg.get(cfg.calibrePath)
+        calibre_bin = 'ebook-convert.exe' if os.name == 'nt' else 'ebook-convert'
+        if not (calibrePath and os.path.isfile(calibrePath) and os.path.basename(calibrePath) == calibre_bin):
+            return False, '未配置 ebook-convert，请在设置中配置 Calibre'
+        tmp_dir = tempfile.mkdtemp(prefix='trim_mobi_')
+        try:
+            stem = Path(mobi_path).stem
+            tmp_epub = os.path.join(tmp_dir, f'{stem}.epub')
+            # mobi -> epub（calibre）
+            subprocess.run([calibrePath, mobi_path, tmp_epub], check=True, capture_output=True)
+            # 剥离 calibre 注入的封面页（titlepage+calibre_cover），否则转回 mobi 时
+            # 封面（首页/末页）会作为 EXTH 封面 + 内容页重复显示
+            stripped_epub = os.path.join(tmp_dir, f'{stem}_strip.epub')
+            strip_calibre_cover(tmp_epub, stripped_epub)
+            # 裁白边（含注入不放大 CSS）
+            trimmed_epub = os.path.join(tmp_dir, f'{stem}_trim.epub')
+            ok, _ = trim_epub_margins(stripped_epub, trimmed_epub, self.threshold, self.padding,
+                                      self.zoom, self.dev_w, self.dev_h,
+                                      progress_cb=self._progress)
+            if not ok:
+                return False, ''
+            # epub -> mobi（复用现有转换，函数内部失败只记日志不抛异常）
+            convert_epub_to_mobi(calibrePath, cfg.get(cfg.calibreOutputDevice),
+                                 f'{stem}_去白边', trimmed_epub, out_path)
+            if os.path.isfile(out_path):
+                return True, ''
+            return False, '转回 mobi 失败'
+        except subprocess.CalledProcessError as e:
+            logging.info(f'[去白边] calibre转换失败 {mobi_path}: {e.stderr}')
+            return False, 'calibre 转换失败'
+        except Exception:
+            logging.info(f'[去白边] mobi处理失败 {mobi_path}: {traceback.format_exc()}')
+            return False, ''
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)

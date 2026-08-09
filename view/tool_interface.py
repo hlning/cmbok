@@ -29,6 +29,8 @@ class ToolInterface(ScrollArea):
         self.todoc.clicked.connect(lambda: self.show_box(4))
         self.mergeepub = ToolCard(QImage(':/cmbok/images/merge_epub.png'), '合并EPUB', '支持常见格式合并成EPUB')
         self.mergeepub.clicked.connect(lambda: self.show_box(5))
+        self.trimmargin = ToolCard(QImage(':/cmbok/images/go_to_baibian.png'), '去白边', '裁掉漫画图片内容外的空白')
+        self.trimmargin.clicked.connect(lambda: self.show_box(6))
 
         self.flowLayout = AutoFlowLayout()
         self.flowLayout.addWidget(self.topdf)
@@ -36,6 +38,7 @@ class ToolInterface(ScrollArea):
         self.flowLayout.addWidget(self.toepub)
         self.flowLayout.addWidget(self.todoc)
         self.flowLayout.addWidget(self.mergeepub)
+        self.flowLayout.addWidget(self.trimmargin)
 
         self.__initWidget()
 
@@ -53,9 +56,9 @@ class ToolInterface(ScrollArea):
         self.vBoxLayout.setAlignment(Qt.AlignTop)
         self._layoutCards()
 
-    # 窗口宽度变化时，卡片每行 5 个、宽度自适应
+    # 窗口宽度变化时，卡片每行 6 个、宽度自适应
     def _layoutCards(self):
-        n = 5
+        n = 6
         lm = self.vBoxLayout.contentsMargins()
         fm = self.flowLayout.contentsMargins()
         avail = self.viewport().width() - lm.left() - lm.right() - fm.left() - fm.right()

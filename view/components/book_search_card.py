@@ -21,6 +21,7 @@ from custom.my_fluent_icon import MyFluentIcon
 from service.cmbok_service import BookSearch, Book, BookDownload
 from utils.base_utils import truncate_string, get_current_time
 from view.components.folder_tree import TreeFrame
+from view.components.detail_dialog_base import present_detail_dialog, content_parent
 from view.components.auto_flow_layout import AutoFlowLayout
 from view.components.info_bar_tip import show_tip
 from view.components.pagination_bar import PaginationBar
@@ -66,6 +67,13 @@ class BookSearchCardView(QWidget):
         self.book_name = ''
         self.is_search = True
         self.stateTooltip = None
+
+        # resize 防抖：拖动/缩放窗口时 resizeEvent 高频触发，用单次定时器合并，
+        # 停止 100ms 后才重排一次卡片宽度，避免重排风暴卡死主线程导致拖动抖动
+        self._resizeTimer = QTimer(self)
+        self._resizeTimer.setSingleShot(True)
+        self._resizeTimer.setInterval(100)
+        self._resizeTimer.timeout.connect(self.refreshCardWidth)
 
         self.vBoxLayout = QVBoxLayout(self)
 
@@ -304,6 +312,11 @@ class BookSearchCardView(QWidget):
         finally:
             self.stateTooltip.setState(True)
             self.stateTooltip = None
+            # 自登账号：搜索时 profile 已拿最新下载量，刷新头像同步外部消耗
+            try:
+                self.window()._refreshAvatarDisplay()
+            except Exception:
+                pass
 
     # 从缓存中直接获取图书
     def getBooks(self, index):
@@ -360,8 +373,8 @@ class BookSearchCardView(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # 延迟到布局完成后再重排，确保取到最新结果区宽度
-        QTimer.singleShot(0, self.refreshCardWidth)
+        # 防抖：拖动过程中只重启定时器，停止 100ms 后才重排一次（取最新结果区宽度）
+        self._resizeTimer.start()
 
 
 # 图书卡片
@@ -369,6 +382,7 @@ class BookCard(ElevatedCardWidget):
     def __init__(self, book, parent=None):
         super().__init__(parent=parent)
         # 图书信息
+        self.book = book
         self.cover = book['cover']
         self.name = book['title']
         self.author = book['author']
@@ -440,6 +454,7 @@ class BookCard(ElevatedCardWidget):
 
         self.hBoxLayout.addStretch(1)
         self.hBoxLayout.addLayout(self.vBtnBoxLayout)
+        self.setCursor(Qt.PointingHandCursor)
 
     # 加载网络图片
     def load_image(self, image_url):
@@ -507,46 +522,76 @@ class BookCard(ElevatedCardWidget):
 
     # 收藏图书
     def collectBook(self):
-        sqlite_util = SQLiteDatabase()
-        try:
-            if not self.is_collect:
-                # 收藏
-                w = TreeMessageBox(self.window())
-                if w.exec():
-                    # 遍历树节点获取选中的节点
-                    selected_items = w.treeFrame.tree.selectedItems()
-                    if selected_items:
-                        # 如果有选中的项，获取第一个选中项并输出名称
-                        selected_item = selected_items[0]
-                        folder_name = selected_item.text(0)  # 获取第一列的文本
-                        # 通过名称查询文件夹id
-                        folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 2})
-                        folder_id = 0 if folder_name == '首页' else folder[0].id
-
-                        sqlite_util.insert_data('cmbok_collection_record', {'cover': self.cover,
-                                                                            'name': self.name, 'author': self.author,
-                                                                            'key': self.book_id,
-                                                                            'book_hash': self.book_hash,
-                                                                            'book_extension': self.extension, 'type': 2,
-                                                                            'collection_time': get_current_time(),
-                                                                            'folder_id': folder_id})
-                        self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
-                        self.is_collect = True
-                        show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', self.parent(), InfoBarPosition.TOP)
-            else:
-                self.collectBtn.setIcon(MyFluentIcon.COLLECT)
-                # 取消收藏
+        # 取消收藏：立即执行，无弹窗
+        if self.is_collect:
+            sqlite_util = SQLiteDatabase()
+            try:
                 sqlite_util.delete_data('cmbok_collection_record', {'key': self.book_id, 'type': 2})
+                self.collectBtn.setIcon(MyFluentIcon.COLLECT)
                 self.is_collect = False
                 show_tip(InfoBarIcon.WARNING, '温馨提示', '已取消收藏', self.parent(), InfoBarPosition.TOP)
-            signalBus.collectChanged.emit()
-        except Exception:
-            show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
-            sqlite_util.rollback()
-            logging.info('收藏图书异常')
-            logging.info(traceback.format_exc())
-        finally:
-            sqlite_util.close()
+                signalBus.collectChanged.emit()
+            except Exception:
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', self.parent(), InfoBarPosition.TOP)
+                sqlite_util.rollback()
+                logging.info('收藏图书异常')
+                logging.info(traceback.format_exc())
+            finally:
+                sqlite_util.close()
+            return
+
+        # 收藏：非模态弹出收藏夹选择，确认后写入
+        win = self.window()
+        w = TreeMessageBox(content_parent(win))
+        cover, name, author = self.cover, self.name, self.author
+        book_id, book_hash, extension = self.book_id, self.book_hash, self.extension
+
+        def _on_accepted():
+            selected_items = w.treeFrame.tree.selectedItems()
+            if not selected_items:
+                return
+            folder_name = selected_items[0].text(0)
+            sqlite_util = SQLiteDatabase()
+            try:
+                # 通过名称查询文件夹id
+                folder = sqlite_util.query_data('comic_collection_folder', {'name': folder_name, 'type': 2})
+                folder_id = 0 if folder_name == '首页' else folder[0].id
+
+                sqlite_util.insert_data('cmbok_collection_record', {'cover': cover, 'name': name, 'author': author,
+                                                                    'key': book_id, 'book_hash': book_hash,
+                                                                    'book_extension': extension, 'type': 2,
+                                                                    'collection_time': get_current_time(),
+                                                                    'folder_id': folder_id})
+                signalBus.collectChanged.emit()
+                show_tip(InfoBarIcon.SUCCESS, '温馨提示', '收藏成功', win, InfoBarPosition.TOP)
+                # 卡片可能已被新搜索重建（弹窗开着时翻页/重搜触发 takeAllWidgets），此时跳过按钮更新
+                try:
+                    self.collectBtn.setIcon(MyFluentIcon.HAVE_COLLECT)
+                    self.is_collect = True
+                except RuntimeError:
+                    pass
+            except Exception:
+                show_tip(InfoBarIcon.ERROR, '温馨提示', '系统异常', win, InfoBarPosition.TOP)
+                sqlite_util.rollback()
+                logging.info('收藏图书异常')
+                logging.info(traceback.format_exc())
+            finally:
+                sqlite_util.close()
+
+        w.accepted.connect(_on_accepted)
+        present_detail_dialog(w)
+
+    def mouseReleaseEvent(self, event):
+        # 点击卡片非按钮区域打开详情对话框；按钮自身消费鼠标事件不会触发此处
+        if event.button() == Qt.LeftButton:
+            self._open_detail()
+        super().mouseReleaseEvent(event)
+
+    def _open_detail(self):
+        from .book_detail_dialog import BookDetailDialog
+        # parent 取内容区（stackedWidget.view）：遮罩只盖内容区，导航栏露出可继续切换
+        dlg = BookDetailDialog(self.book, content_parent(self.window()))
+        present_detail_dialog(dlg)
 
 
 # 树形菜单

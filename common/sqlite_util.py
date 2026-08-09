@@ -46,7 +46,7 @@ class SQLiteDatabase:
         # chapter_path_word 章节key 只有漫画有
         # book_hash 图书hash
         # type 类型。1：漫画 2：图书
-        # status 状态：-4：今日无法下载 -3：软件退出 -2：无法下载 -1：转换epub失败 1：下载中 2：等待中 3：已完成 0：下载失败
+        # status 状态：-8：地址不可用 -7：登录失效 -6：账号额度用完 -5：达到下载限制 -4：今日无法下载 -3：软件退出 -2：无法下载 -1：转换epub失败 1：下载中 2：等待中 3：已完成 0：下载失败
         # process 进度
         # start_time 开始时间
         # finish_time 完成时间
@@ -86,17 +86,37 @@ class SQLiteDatabase:
                            'downloaded_num': 'INTEGER', 'downloading_num': 'INTEGER', 'is_update': 'INTEGER',
                            'start_time': 'TEXT', 'end_time': 'TEXT'})
 
+        # 站点章节下载任务表（仅跨域站点 cross_origin=1：浮窗勾选后保存到此表，下载管理窗口展示并触发下载）
+        # status：0待下载 1下载中 2已完成 -1失败；process：0-100
+        self.ensure_table('website_chapter_download',
+                          {'id': 'INTEGER PRIMARY KEY', 'comic_name': 'TEXT', 'site_name': 'TEXT',
+                           'chapter_count': 'INTEGER', 'chapter_range': 'TEXT', 'chapters_json': 'TEXT',
+                           'site_config_json': 'TEXT', 'status': 'INTEGER', 'process': 'INTEGER',
+                           'start_time': 'TEXT', 'finish_time': 'TEXT'})
+
         # 漫画站点配置表
         self.ensure_table('comic_website',
                           {'id': 'INTEGER PRIMARY KEY', 'name': 'TEXT', 'icon': 'TEXT',
                            'url': 'TEXT', 'comic_cover_dom': 'TEXT', 'comic_name_dom': 'TEXT',
                            'comic_author_dom': 'TEXT', 'chapter_name_dom': 'TEXT', 'chapter_link_dom': 'TEXT',
                            'img_dom': 'TEXT', 'use_frame': 'INTEGER', 'img_attr': 'TEXT', 'img_script': 'TEXT',
-                           'chapter_order': 'INTEGER', 'scroll_to_load': 'INTEGER'})
+                           'chapter_order': 'INTEGER', 'scroll_to_load': 'INTEGER',
+                           'img_load_mode': 'INTEGER', 'next_page_selector': 'TEXT', 'page_label_selector': 'TEXT',
+                           'cross_origin': 'INTEGER', 'restore_algorithm': 'TEXT'})
 
         # 回填 chapter_order/scroll_to_load 默认值，保证老库升级后行为不变
         self.cursor.execute("UPDATE comic_website SET chapter_order = 1 WHERE chapter_order IS NULL")
         self.cursor.execute("UPDATE comic_website SET scroll_to_load = 1 WHERE scroll_to_load IS NULL")
+        # img_load_mode 迁移：老 scroll_to_load=1->2(滚到底)，0->1(滚动)；NULL 兜底为 2(滚到底)
+        self.cursor.execute("UPDATE comic_website SET img_load_mode = CASE WHEN scroll_to_load = 1 THEN 2 ELSE 1 END WHERE img_load_mode IS NULL")
+        self.cursor.execute("UPDATE comic_website SET img_load_mode = 2 WHERE img_load_mode IS NULL")
+        # cross_origin 迁移：老库补列后值为 NULL，兜底为 0（同域，走现有流程不变）
+        self.cursor.execute("UPDATE comic_website SET cross_origin = 0 WHERE cross_origin IS NULL")
+        # restore_algorithm 迁移：老库补列后值为 NULL，兜底为 ''（不恢复图片）
+        self.cursor.execute("UPDATE comic_website SET restore_algorithm = '' WHERE restore_algorithm IS NULL")
+        # 启动清扫：上次崩溃/关闭遗留的「下载中」下载管理任务置为失败（status=1 -> -1），
+        # 避免永久卡在「下载中」（崩溃时无 closeEvent，靠启动时一次性回补）
+        self.cursor.execute("UPDATE website_chapter_download SET status = -1 WHERE status = 1")
 
         # ===== 数据迁移：合并默认站点到 comic_website（按 name 补缺，已存在/用户自定义站点保留）=====
         self._merge_default_comic_website()
@@ -130,27 +150,54 @@ class SQLiteDatabase:
              'comic_name_dom': '.intro_l .title h1', 'comic_author_dom': '',
              'chapter_name_dom': '.plist.pnormal ul li a', 'chapter_link_dom': '.plist.pnormal ul a',
              'img_dom': '.img-box.J_shareContent img', 'use_frame': 1, 'img_attr': '',
-             'img_script': '',
-             'chapter_order': 1, 'scroll_to_load': 1},
+             'img_script': 'var w = ifr.contentWindow; var h = w.gethost(); return w.getUrlpics().map(function(e){ return h + e; });',
+             'chapter_order': 1, 'img_load_mode': 2, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 0, 'restore_algorithm': ''},
             {'name': '再漫画', 'icon': 'https://manhua.zaimanhua.com/_nuxt/zmh-logo.d5f02b77.png',
              'url': 'https://manhua.zaimanhua.com/', 'comic_cover_dom': '',
              'comic_name_dom': '.wrap_intro_l_comic h1 a', 'comic_author_dom': '',
              'chapter_name_dom': '.tab-content-selected a', 'chapter_link_dom': '.tab-content-selected a',
-             'img_dom': '', 'use_frame': 0, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
+             'img_dom': '', 'use_frame': 0, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'img_load_mode': 2, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 0, 'restore_algorithm': ''},
             {'name': '咚漫', 'icon': 'https://cdn-static.dongmanmanhua.cn/image/pc/newLogo/home_papge_logo_120.png',
              'url': 'https://www.dongmanmanhua.cn/', 'comic_cover_dom': '',
              'comic_name_dom': 'h1.subj', 'comic_author_dom': '',
              'chapter_name_dom': '#_listUl .subj span', 'chapter_link_dom': '#_listUl a',
-             'img_dom': '#_imageList img', 'use_frame': 0, 'img_attr': 'data-url', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
+             'img_dom': '#_imageList img', 'use_frame': 0, 'img_attr': 'data-url', 'img_script': '', 'chapter_order': 1, 'img_load_mode': 2, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 0, 'restore_algorithm': ''},
             {'name': 'MYCOMIC', 'icon': '', 'url': 'https://mycomic.com/cn', 'comic_cover_dom': '',
              'comic_name_dom': '.truncate.whitespace-nowrap', 'comic_author_dom': '',
              'chapter_name_dom': '.mt-8.mb-12 a', 'chapter_link_dom': '.mt-8.mb-12 a',
-             'img_dom': '.-mx-6 img', 'use_frame': 1, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'scroll_to_load': 1},
+             'img_dom': '.-mx-6 img', 'use_frame': 1, 'img_attr': '', 'img_script': '', 'chapter_order': 1, 'img_load_mode': 2, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 0, 'restore_algorithm': ''},
             {'name': '拷贝漫画', 'icon': '', 'url': 'https://www.copy3000.com/', 'comic_cover_dom': '',
              'comic_name_dom': '.col-9.comicParticulars-title-right h6', 'comic_author_dom': '',
              'chapter_name_dom': '.tab-pane.fade.show.active a', 'chapter_link_dom': '.tab-pane.fade.show.active a',
              'img_dom': '.comicContent-list img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
-             'chapter_order': 0, 'scroll_to_load': 0},
+             'chapter_order': 0, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 0, 'restore_algorithm': ''},
+            {'name': '（需要魔法）动漫细说', 'icon': 'https://comic.acgn.cc/themes/acgn/images/logo.jpg', 'url': 'https://comic.acgn.cc/', 'comic_cover_dom': '', 'comic_name_dom': '.list_navbox h3', 'comic_author_dom': '',
+             'chapter_name_dom': '#comic_chapter a', 'chapter_link_dom': '#comic_chapter a', 'img_dom': '#pic_list img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 1, 'img_load_mode': 3, 'next_page_selector': '.nextPageButton:eq(1)', 'page_label_selector': '#select1', 'cross_origin': 0, 'restore_algorithm': ''},
+            {'name': '（需要魔法）MANGA', 'icon': '', 'url': 'https://www.mangabz.com/', 'comic_cover_dom': '', 'comic_name_dom': '.detail-info-title', 'comic_author_dom': '',
+             'chapter_name_dom': '#chapterlistload a', 'chapter_link_dom': '#chapterlistload a', 'img_dom': '#cp_image', 'use_frame': 1, 'img_attr': 'src', 'img_script': '',
+             'chapter_order': 1, 'img_load_mode': 3, 'next_page_selector': '', 'page_label_selector': '.reader-bottom-page', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '（需要魔法）腐宅', 'icon': 'https://img.boylove.cc/img/logo/6a190b219da5b.png', 'url': 'https://boylove.cc/', 'comic_cover_dom': '', 'comic_name_dom': '.stui-content__detail .title h1', 'comic_author_dom': '',
+             'chapter_name_dom': '.stui-play__list.clearfix a', 'chapter_link_dom': '.stui-play__list.clearfix a', 'img_dom': '.reader-cartoon-chapter img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 1, 'restore_algorithm': '腐漫'},
+            {'name': '（建议开魔法）来漫画', 'icon': 'https://lmanhua.com/novel/images/readnovel-logo.png', 'url': 'https://lmanhua.com/', 'comic_cover_dom': '', 'comic_name_dom': '.col-xs-12.col-sm-8.col-md-8.desc .title', 'comic_author_dom': '',
+             'chapter_name_dom': '#list-chapter .list-chapter a', 'chapter_link_dom': '#list-chapter .list-chapter a', 'img_dom': '.chapter-content img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '包子漫画', 'icon': '', 'url': 'https://cn.baozimh.com/', 'comic_cover_dom': '', 'comic_name_dom': '.comics-detail__title', 'comic_author_dom': '',
+             'chapter_name_dom': '#chapter-items a,#chapters_other_list a', 'chapter_link_dom': '#chapter-items a,#chapters_other_list a', 'img_dom': '.comic-contain img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '（建议开魔法）GoDa漫画', 'icon': 'https://godamh.com/assets/images/Logo.png', 'url': 'https://godamh.com/', 'comic_cover_dom': '', 'comic_name_dom': '.mb-2.text-xl.font-medium', 'comic_author_dom': '',
+             'chapter_name_dom': '#chapterDrawerListInner .chaptertitle', 'chapter_link_dom': '#chapterDrawerListInner a', 'img_dom': '#chapcontent img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 1, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '（需要魔法，韩漫无翻译）comic.naver', 'icon': 'https://shared-comic.pstatic.net/favicon/favicon_96x96.ico', 'url': 'https://comic.naver.com', 'comic_cover_dom': '', 'comic_name_dom': '.EpisodeListInfo__title--mYLjC', 'comic_author_dom': '',
+             'chapter_name_dom': '.EpisodeListList__link--DdClU .EpisodeListList__title--lfIzU', 'chapter_link_dom': '.EpisodeListList__episode_list--_N3ks a', 'img_dom': '#sectionContWide img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 1, 'img_load_mode': 1, 'next_page_selector': '', 'page_label_selector': '', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '（需要魔法，下载较慢）绅士漫画', 'icon': '', 'url': 'https://www.wnacg.com/', 'comic_cover_dom': '', 'comic_name_dom': '.userwrap h2', 'comic_author_dom': '',
+             'chapter_name_dom': '.gallary_wrap.tb .cc .name.tb', 'chapter_link_dom': '.gallary_wrap.tb .cc .pic_box.tb a', 'img_dom': '#picarea', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'img_load_mode': 3, 'next_page_selector': '.newpagewrap .btntuzao:eq(2)', 'page_label_selector': '.newpagelabel', 'cross_origin': 1, 'restore_algorithm': ''},
+            {'name': '（需要魔法，不能大批量下载，网站有限制）nhentai.net', 'icon': 'https://nhentai.net/logo.svg', 'url': 'https://nhentai.net/', 'comic_cover_dom': '', 'comic_name_dom': '#info-block h2', 'comic_author_dom': '',
+             'chapter_name_dom': '.thumbs.svelte-iec8wt a', 'chapter_link_dom': '.thumbs.svelte-iec8wt a', 'img_dom': '#image-container img', 'use_frame': 1, 'img_attr': '', 'img_script': '',
+             'chapter_order': 0, 'img_load_mode': 3, 'next_page_selector': '.reader-pagination .next:eq(1)', 'page_label_selector': '.page-number.btn.btn-unstyled', 'cross_origin': 1, 'restore_algorithm': ''},
         ]
         try:
             for site in default_sites:
